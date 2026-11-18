@@ -394,8 +394,19 @@ fn get_state(ui: State<'_, Ui>) -> UiState {
 }
 
 #[tauri::command]
-async fn create_machine(ui: State<'_, Ui>, name: String, size: String, projects: Option<Vec<String>>) -> Res {
-    ui.app()?.create_machine(&name, &size, projects.unwrap_or_default()).await.map(drop).map_err(err)
+async fn create_machine(
+    ui: State<'_, Ui>,
+    name: String,
+    size: String,
+    account: Option<String>,
+    projects: Option<Vec<String>>,
+) -> Res {
+    let account = account.filter(|a| !a.is_empty());
+    ui.app()?
+        .create_machine(&name, &size, account.as_deref(), projects.unwrap_or_default())
+        .await
+        .map(drop)
+        .map_err(err)
 }
 
 /// This computer's T3 projects that can go to a machine.
@@ -483,10 +494,11 @@ async fn delete_machine(ui: State<'_, Ui>, id: String, discard: Option<bool>) ->
 #[tauri::command]
 async fn update_settings(handle: AppHandle, ui: State<'_, Ui>, settings: Settings) -> Res {
     let app = ui.app()?;
+    crate::app::check_settings(&settings).map_err(err)?;
     if app.settings().start_at_login != settings.start_at_login {
         apply_autostart(&handle, settings.start_at_login).map_err(|e| format!("Couldn't change start at login: {e}"))?;
     }
-    app.update_settings(settings);
+    app.update_settings(settings).map_err(err)?;
     emit_state(&handle);
     Ok(())
 }

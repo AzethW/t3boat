@@ -47,7 +47,7 @@ impl MachineRuntime {
     pub async fn sign_in(&self, agent: Agent) -> Result<()> {
         self.ensure_awake().await?;
         let id = self.sandbox_id();
-        let boat = &self.shared.boat;
+        let boat = &self.boat();
         // The CLI hands the sign-in URL to $BROWSER; this one records it instead.
         let dir = boat
             .exec_ok(
@@ -86,7 +86,7 @@ impl MachineRuntime {
 
     async fn finish_sign_in(&self, agent: Agent, dir: &str) -> Result<()> {
         let id = self.sandbox_id();
-        let boat = &self.shared.boat;
+        let boat = &self.boat();
         let started = Instant::now();
         let url = loop {
             let out = boat.exec(&id, &format!("cat '{dir}/url' 2>/dev/null"), 30).await?;

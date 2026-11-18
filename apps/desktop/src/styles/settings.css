@@ -139,3 +139,27 @@
 .account-email:hover {
   color: var(--fg);
 }
+
+/* ── settings: boat accounts ─────────────────────────── */
+
+.boat-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.account-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 6px;
+}
+.account-input,
+.account-select {
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  font: 400 11px var(--font-mono);
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}

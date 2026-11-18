@@ -9,9 +9,10 @@ import type { CommandArgs, CommandName, LocalProject, MachineDetails, MachinePro
 
 const params = new URLSearchParams(location.search);
 
-type Seed = Omit<MachineView, "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
-  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects">>;
+type Seed = Omit<MachineView, "account" | "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
+  Partial<Pick<MachineView, "account" | "countdown" | "signedOut" | "projects">>;
 const machine = (m: Seed): MachineView => ({
+  account: null,
   countdown: null,
   signedOut: [],
   projects: [],
@@ -106,7 +107,7 @@ function seed(): UiState {
     account: { identifier: "you@example.com", plan: "Pro" },
     machines: structuredClone(machines),
     costs: { today: 0.42, month: 12.8, startsToday: 3, startsLimit: 50 },
-    settings: { startAtLogin: true },
+    settings: { startAtLogin: true, boatAccounts: [{ name: "team", keychain: "boat-api-key-team" }] },
     mcp: params.get("mcp") === "mixed" ? { claudeCode: true, codex: null } : { claudeCode: false, codex: false },
     sizes: [
       { id: "small", spec: "2 vCPU · 4 GB", hourly: 0.018 },

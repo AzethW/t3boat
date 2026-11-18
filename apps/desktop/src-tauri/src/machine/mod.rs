@@ -198,6 +198,11 @@ impl MachineRuntime {
         this
     }
 
+    /// The Boat CLI as the account the machine lives in.
+    pub fn boat(&self) -> Boat {
+        self.shared.boat.for_account(self.record.read().unwrap().boat_account.as_ref())
+    }
+
     pub fn record(&self) -> Machine {
         self.record.read().unwrap().clone()
     }
@@ -291,7 +296,7 @@ impl MachineRuntime {
 
     pub async fn refresh_power(&self) -> Result<Power> {
         let id = self.sandbox_id();
-        match self.shared.boat.info(&id).await {
+        match self.boat().info(&id).await {
             Ok(sb) => {
                 // A restore swapped the sandbox meanwhile: this answer is about the old one.
                 if self.sandbox_id() != id {
@@ -312,7 +317,7 @@ impl MachineRuntime {
                 Ok(p)
             }
             Err(e) => {
-                let gone = self.shared.boat.confirmed_gone(&id).await;
+                let gone = self.boat().confirmed_gone(&id).await;
                 if self.sandbox_id() != id {
                     // Restored meanwhile, and the old sandbox deleted.
                     return Ok(self.power());
@@ -361,7 +366,7 @@ impl MachineRuntime {
 
     /// Boat does not always restore hosted ports on resume.
     async fn rehost(&self) -> Result<()> {
-        let (t3, watchdog) = provision::host(&self.shared.boat, &self.sandbox_id()).await?;
+        let (t3, watchdog) = provision::host(&self.boat(), &self.sandbox_id()).await?;
         self.update_record(|m| {
             m.upstream_url = t3;
             m.watchdog_url = watchdog;
@@ -428,7 +433,7 @@ impl MachineRuntime {
                     tracing::info!("resuming {id}");
                     self.set_power(Power::Starting);
                     let record = self.record();
-                    if self.shared.boat.resume(&record.sandbox_id, &record.size).await? == Resume::DataExpired {
+                    if self.boat().resume(&record.sandbox_id, &record.size).await? == Resume::DataExpired {
                         self.restore().await?;
                         restored = true;
                     }
@@ -485,7 +490,7 @@ impl MachineRuntime {
     /// snapshot the watchdog saved at the last sleep. Its addresses differ; the wake hosts them.
     async fn restore(&self) -> Result<()> {
         let record = self.record();
-        let boat = &self.shared.boat;
+        let boat = &self.boat();
         tracing::info!("restoring {} from its snapshot", record.id);
         let sandbox = boat
             .create(
@@ -548,7 +553,7 @@ impl MachineRuntime {
         }
         tracing::info!("upgrading {} (T3 {desktop}, scripts {revision})", self.id());
         provision::run(
-            &self.shared.boat,
+            &self.boat(),
             &record.sandbox_id,
             &record.name,
             &desktop,

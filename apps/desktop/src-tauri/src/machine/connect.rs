@@ -51,7 +51,7 @@ impl MachineRuntime {
 
     async fn run_connect_setup(&self) -> Result<()> {
         let id = self.sandbox_id();
-        let boat = &self.shared.boat;
+        let boat = &self.boat();
         // In the background, so the sign-in page can be read while it waits; `exit` says how it ended.
         let dir = boat
             .exec_ok(
@@ -70,7 +70,7 @@ impl MachineRuntime {
 
     async fn finish_connect_setup(&self, dir: &str) -> Result<()> {
         let id = self.sandbox_id();
-        let boat = &self.shared.boat;
+        let boat = &self.boat();
         let started = Instant::now();
         let mut opened = false;
         loop {

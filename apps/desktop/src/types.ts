@@ -17,6 +17,7 @@ export interface MachineView {
   id: string;
   name: string;
   size: string;
+  account: string | null; // the settings' Boat account it lives in; null: the Boat CLI's login
   state: MachineState;
   detail: string;
   countdown: Countdown | null; // set while `detail` counts down
@@ -51,6 +52,14 @@ export interface Countdown {
 
 export interface Settings {
   startAtLogin: boolean;
+  boatAccounts: BoatAccount[];
+}
+
+/** A Boat account besides the CLI's own login. Holds where its key is, never the key. */
+export interface BoatAccount {
+  name: string;
+  keychain?: string; // keychain service of a generic password holding a Boat API key
+  org?: string; // organization the sandboxes bill to
 }
 
 export interface Size {
@@ -91,7 +100,7 @@ export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck"
 
 export interface Commands {
   get_state: [undefined, UiState];
-  create_machine: [{ name: string; size: string; projects?: string[] }, void]; // projects: LocalProject ids to add once up
+  create_machine: [{ name: string; size: string; account?: string; projects?: string[] }, void]; // projects: LocalProject ids to add once up
   local_projects: [undefined, LocalProject[]]; // pinned first, then most recent
   add_project: [{ id: string; projectId: string }, void]; // resolves once cloned
   wake_machine: [{ id: string }, void];

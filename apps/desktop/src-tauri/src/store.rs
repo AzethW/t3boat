@@ -1,6 +1,7 @@
 //! Persistent app state: machines, settings and this month's spend, one JSON file in the app
 //! data dir.
 
+use crate::boat::BoatAccount;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -42,6 +43,9 @@ pub struct Machine {
     /// T3 Connect is on there: other devices reach it with the user's T3 account.
     #[serde(default)]
     pub connect: bool,
+    /// The Boat account it lives in; none is the Boat CLI's own login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boat_account: Option<BoatAccount>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -56,11 +60,13 @@ pub struct LinkToken {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub start_at_login: bool,
+    /// Boat accounts a new machine can be created in, besides the CLI's own login.
+    pub boat_accounts: Vec<BoatAccount>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { start_at_login: true }
+        Self { start_at_login: true, boat_accounts: Vec::new() }
     }
 }
 
@@ -93,6 +99,8 @@ pub struct State {
     /// Sandboxes of creates still running: deleted at the next start if the app quit or crashed
     /// before the create finished.
     pub pending_sandboxes: Vec<String>,
+    /// The Boat account of each of those not in the CLI's own login, by sandbox id.
+    pub pending_sandbox_accounts: HashMap<String, BoatAccount>,
 }
 
 pub struct Store {

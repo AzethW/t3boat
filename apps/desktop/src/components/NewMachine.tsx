@@ -8,7 +8,7 @@ import { SubHeader } from "./SubHeader";
 interface Props {
   state: UiState;
   onNameChange: (name: string) => void;
-  onCreate: (name: string, size: string, projects: string[]) => void;
+  onCreate: (name: string, size: string, account: string, projects: string[]) => void;
   onBack: () => void;
 }
 
@@ -21,6 +21,8 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
   const projects = useLocalProjects();
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const accounts = state.settings.boatAccounts;
+  const [account, setAccount] = useState("");
 
   useEffect(() => {
     input.current?.select();
@@ -37,7 +39,7 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!problem && size) onCreate(name, size, picked);
+    if (!problem && size) onCreate(name, size, account, picked);
   };
 
   return (
@@ -84,6 +86,23 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
             Billed only while awake · sleeps 5 min after agents finish · resize anytime
           </span>
         </fieldset>
+
+        {accounts.length > 0 && (
+          <div className="field">
+            <label className="caption" htmlFor="machine-account">
+              boat account
+            </label>
+            <select id="machine-account" className="account-select" value={account} onChange={(e) => setAccount(e.target.value)}>
+              <option value="">Boat CLI login</option>
+              {accounts.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <span className="hint">Its sandbox, costs and snapshots stay in this account</span>
+          </div>
+        )}
 
         <fieldset className="field">
           <legend className="caption">projects</legend>

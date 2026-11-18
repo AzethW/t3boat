@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { McpClient, Settings, UiState } from "../types";
+import type { BoatAccount, McpClient, Settings, UiState } from "../types";
 import { AgentName, AgentNames } from "./AgentLogos";
 import { Icon } from "./Icons";
 import { Dots } from "./common";
@@ -105,6 +105,7 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
             )}
           </span>
         </div>
+        <BoatAccounts accounts={s.boatAccounts} onChange={(boatAccounts) => change({ boatAccounts })} />
       </div>
       <div className="view-foot settings-foot">
         <span className="setting-value" title="Boat account">
@@ -120,6 +121,67 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
           Quit t3boat
         </button>
       </div>
+    </div>
+  );
+}
+
+const ACCOUNT_WORD = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function BoatAccounts({ accounts, onChange }: { accounts: BoatAccount[]; onChange: (a: BoatAccount[]) => void }) {
+  const [draft, setDraft] = useState({ name: "", keychain: "", org: "" });
+  const values = [draft.name, draft.keychain, draft.org].filter(Boolean);
+  const problem = !draft.name
+    ? null
+    : accounts.some((a) => a.name === draft.name)
+      ? "There is an account with this name"
+      : !values.every((v) => ACCOUNT_WORD.test(v))
+        ? "Letters, digits, dots, dashes and underscores only"
+        : !draft.keychain && !draft.org
+          ? "Give a keychain item, an organization or both"
+          : null;
+  const add = () => {
+    if (!draft.name || problem) return;
+    onChange([...accounts, { name: draft.name, keychain: draft.keychain || undefined, org: draft.org || undefined }]);
+    setDraft({ name: "", keychain: "", org: "" });
+  };
+  const field = (key: keyof typeof draft, placeholder: string) => (
+    <input
+      aria-label={placeholder}
+      className="account-input"
+      placeholder={placeholder}
+      value={draft[key]}
+      onChange={(e) => setDraft({ ...draft, [key]: e.target.value.trim() })}
+      onKeyDown={(e) => e.key === "Enter" && add()}
+      spellCheck={false}
+      autoComplete="off"
+    />
+  );
+  return (
+    <div className="setting">
+      <span className="caption">boat accounts</span>
+      <span className="setting-name">Create machines in other Boat accounts</span>
+      {accounts.map((a) => (
+        <div key={a.name} className="boat-account">
+          <span>
+            <span className="setting-name">{a.name}</span>
+            <span className="setting-value">{[a.keychain && `keychain ${a.keychain}`, a.org && `org ${a.org}`].filter(Boolean).join(" · ")}</span>
+          </span>
+          <button className="btn btn-sm btn-quiet" onClick={() => onChange(accounts.filter((x) => x.name !== a.name))}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="account-form">
+        {field("name", "name")}
+        {field("keychain", "keychain service")}
+        {field("org", "organization")}
+        <button className="btn btn-sm btn-outline" disabled={!draft.name || !!problem} onClick={add}>
+          Add
+        </button>
+      </div>
+      <span className={`hint${problem ? " is-error" : ""}`}>
+        {problem ?? "The API key stays in your keychain; t3boat keeps only the item's service name"}
+      </span>
     </div>
   );
 }

@@ -10,7 +10,7 @@ use crate::store::Settings;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent};
@@ -37,6 +37,21 @@ struct Ui {
     windowed: AtomicBool,
     /// One `init` at a time: the startup check and "Check again" must not both build an App.
     init_lock: tokio::sync::Mutex<()>,
+    /// When the panel last hid because it lost focus.
+    blurred_at: Mutex<Option<Instant>>,
+}
+
+/// Pressing on the tray icon takes the panel's focus, so it hides before the click that follows
+/// arrives; a click this soon after is that same click, closing it.
+const CLICK_AFTER_BLUR: Duration = Duration::from_millis(500);
+
+/// Toggles the panel from a click on the tray icon.
+fn tray_clicked(handle: &AppHandle, anchor: Anchor) {
+    let blurred_at = handle.state::<Ui>().blurred_at.lock().unwrap().take();
+    if blurred_at.is_some_and(|at| at.elapsed() < CLICK_AFTER_BLUR) {
+        return;
+    }
+    toggle_panel(handle, Some(anchor));
 }
 
 /// Whether each coding agent CLI has t3boat's MCP server; `None`: that CLI is not installed.
@@ -701,7 +716,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        toggle_panel(tray.app_handle(), Some(Anchor { icon: rect, cursor: position }));
+                        tray_clicked(tray.app_handle(), Anchor { icon: rect, cursor: position });
                     }
                 })
                 .build(app)?;
@@ -713,6 +728,7 @@ pub fn run() {
                 let keep_open = std::env::var_os("T3BOAT_KEEP_PANEL_OPEN").is_some();
                 panel.on_window_event(move |e| match e {
                     WindowEvent::Focused(false) if !keep_open && !windowed(&handle) => {
+                        *handle.state::<Ui>().blurred_at.lock().unwrap() = Some(Instant::now());
                         let _ = hide.hide();
                     }
                     // The panel lives as long as the app: a close (Alt+F4, Cmd+W) only hides it.

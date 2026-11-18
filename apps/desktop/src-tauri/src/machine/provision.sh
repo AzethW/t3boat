@@ -79,20 +79,24 @@ __t3boat_import() {
     systemctl --user import-environment $__t3boat_set || exit 1
   fi
   printf '%s\n' $__t3boat_set >"$__t3boat_run/t3boat-boat-env.names"
-  echo "$1" >"$__t3boat_run/t3boat-boat-env.sum"
 }
 __t3boat_hash() { sha256sum "$__t3boat_file" | cut -d' ' -f1; }
+__t3boat_imported() { [ "$1" = "$(cat "$__t3boat_run/t3boat-boat-env.sum" 2>/dev/null)" ]; }
 if [ "$__t3boat_mode" != refresh ]; then
-  __t3boat_import "$(__t3boat_hash)" || exit 1
+  __t3boat_sum=$(__t3boat_hash)
+  __t3boat_import || exit 1
+  echo "$__t3boat_sum" >"$__t3boat_run/t3boat-boat-env.sum"
   exit 0
 fi
 # systemd does not watch the file while this runs: a write meanwhile shows only in its hash.
 for _ in 1 2 3; do
   __t3boat_sum=$(__t3boat_hash)
-  [ "$__t3boat_sum" = "$(cat "$__t3boat_run/t3boat-boat-env.sum" 2>/dev/null)" ] && exit 0
-  ( __t3boat_import "$__t3boat_sum" ) || exit 1
-  systemctl --user try-restart t3code.service
+  __t3boat_imported "$__t3boat_sum" && exit 0
+  ( __t3boat_import ) || exit 1
+  systemctl --user try-restart t3code.service || exit 1
+  echo "$__t3boat_sum" >"$__t3boat_run/t3boat-boat-env.sum"
 done
+__t3boat_imported "$(__t3boat_hash)"
 SCRIPT
 )"
 put_unit "$units/t3boat-boat-env.service" "$(cat <<'UNIT'

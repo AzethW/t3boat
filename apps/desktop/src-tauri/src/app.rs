@@ -1,7 +1,7 @@
 //! The app's model: machines, settings, setup checks. UI-agnostic; the tray and the dev CLI
 //! both drive it.
 
-use crate::boat::{Boat, Starts};
+use crate::boat::{Boat, BoatAccount, Starts};
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
 use crate::store::{Settings, Spend, State, Store};
@@ -61,6 +61,8 @@ pub struct MachineView {
     pub id: String,
     pub name: String,
     pub size: String,
+    /// The settings' Boat account it lives in; none is the Boat CLI's own login.
+    pub account: Option<String>,
     pub state: MachineState,
     pub detail: String,
     /// Set while `detail` counts down, so the UI can tick it between updates.
@@ -123,6 +125,14 @@ struct Creating {
     port: u16,
     /// Its Boat sandbox, once there is one.
     sandbox: Option<String>,
+    account: Option<BoatAccount>,
+}
+
+/// A sandbox of a create the app didn't live to finish, and the account it is in.
+#[derive(Clone)]
+struct Leftover {
+    sandbox: String,
+    account: Option<BoatAccount>,
 }
 
 struct Running {
@@ -141,7 +151,7 @@ pub struct App {
     spend: Mutex<HashMap<String, Spend>>,
     retired_ports: Mutex<Vec<u16>>,
     /// Sandboxes of creates the app didn't live to finish, until deleted.
-    leftover_sandboxes: Mutex<Vec<String>>,
+    leftover_sandboxes: Mutex<Vec<Leftover>>,
 }
 
 impl App {
@@ -154,10 +164,12 @@ impl App {
         let store = Store::new(&data_dir);
         let state = store.load().context("reading t3boat state")?;
         // A machine saved meanwhile owns its sandbox.
-        let leftover: Vec<String> = state
+        let mut accounts = state.pending_sandbox_accounts;
+        let leftover: Vec<Leftover> = state
             .pending_sandboxes
             .into_iter()
             .filter(|s| !state.machines.iter().any(|m| &m.sandbox_id == s))
+            .map(|sandbox| Leftover { account: accounts.remove(&sandbox), sandbox })
             .collect();
         let shared = Arc::new(Shared {
             boat,
@@ -189,16 +201,17 @@ impl App {
     }
 
     async fn delete_leftover_sandboxes(self: Arc<Self>) {
-        let sandboxes = self.leftover_sandboxes.lock().unwrap().clone();
-        for id in sandboxes {
-            self.delete_leftover(&id).await;
+        let leftovers = self.leftover_sandboxes.lock().unwrap().clone();
+        for leftover in leftovers {
+            self.delete_leftover(&leftover).await;
         }
     }
 
     /// Unfinished, unlisted and billed without limit: deleted, or the user told. Kept until Boat
     /// confirms it gone, so the next launch tries again.
-    async fn delete_leftover(&self, id: &str) {
-        let boat = &self.shared.boat;
+    async fn delete_leftover(&self, leftover: &Leftover) {
+        let id = leftover.sandbox.as_str();
+        let boat = &self.shared.boat.for_account(leftover.account.as_ref());
         if let Err(e) = boat.delete(id).await {
             if !boat.confirmed_gone(id).await {
                 self.shared.notify(
@@ -208,7 +221,7 @@ impl App {
                 return;
             }
         }
-        self.leftover_sandboxes.lock().unwrap().retain(|s| s != id);
+        self.leftover_sandboxes.lock().unwrap().retain(|l| l.sandbox != id);
         self.shared.persist();
     }
 
@@ -259,29 +272,45 @@ impl App {
         // One lock at a time: a guard in a field initializer would live until the end of the `let`.
         let spend = self.spend.lock().unwrap().clone();
         let retired_ports = self.retired_ports.lock().unwrap().clone();
-        let creating: Vec<_> = self.creating.lock().unwrap().iter().filter_map(|c| c.sandbox.clone()).collect();
-        let mut pending_sandboxes = self.leftover_sandboxes.lock().unwrap().clone();
-        pending_sandboxes.extend(creating);
+        let creating: Vec<Leftover> = (self.creating.lock().unwrap().iter())
+            .filter_map(|c| Some(Leftover { sandbox: c.sandbox.clone()?, account: c.account.clone() }))
+            .collect();
+        let mut pending = self.leftover_sandboxes.lock().unwrap().clone();
+        pending.extend(creating);
+        let pending_sandbox_accounts = (pending.iter())
+            .filter_map(|l| Some((l.sandbox.clone(), l.account.clone()?)))
+            .collect();
+        let pending_sandboxes = pending.into_iter().map(|l| l.sandbox).collect();
         let state = State {
             machines: self.machines().iter().map(|m| m.record()).collect(),
             settings: self.settings(),
             spend,
             retired_ports,
             pending_sandboxes,
+            pending_sandbox_accounts,
         };
         if let Err(e) = self.store.save(&state) {
             tracing::error!("saving state: {e:#}");
         }
     }
 
-    pub fn update_settings(&self, settings: Settings) {
+    pub fn update_settings(&self, settings: Settings) -> Result<()> {
+        check_settings(&settings)?;
         *self.shared.settings.write().unwrap() = settings;
         self.shared.persist();
+        Ok(())
+    }
+
+    /// One of the settings' Boat accounts, by name.
+    fn boat_account(&self, name: &str) -> Result<BoatAccount> {
+        (self.settings().boat_accounts.into_iter())
+            .find(|a| a.name == name)
+            .ok_or_else(|| anyhow!("no Boat account {name} in t3boat's settings"))
     }
 
     /// Claims the name and a local port for a new machine, so concurrent creates never share
     /// either.
-    fn reserve(&self, name: &str) -> Result<u16> {
+    fn reserve(&self, name: &str, account: Option<&BoatAccount>) -> Result<u16> {
         let mut creating = self.creating.lock().unwrap();
         let records: Vec<_> = self.machines().iter().map(|m| m.record()).collect();
         let names = records.iter().map(|m| &m.name).chain(creating.iter().map(|c| &c.name));
@@ -298,7 +327,13 @@ impl App {
         let port = (FIRST_PORT..FIRST_PORT + PORTS)
             .find(|p| !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
             .ok_or_else(|| anyhow!("no free local port"))?;
-        creating.push(Creating { name: name.to_owned(), step: "Preparing".into(), port, sandbox: None });
+        creating.push(Creating {
+            name: name.to_owned(),
+            step: "Preparing".into(),
+            port,
+            sandbox: None,
+            account: account.cloned(),
+        });
         Ok(port)
     }
 
@@ -318,23 +353,27 @@ impl App {
     }
 
     /// Creates a machine, from the saved snapshot `template` if given, then adds this computer's
-    /// T3 projects `projects` (ids) to it.
+    /// T3 projects `projects` (ids) to it. `account`: the name of one of the settings' Boat
+    /// accounts; none is the Boat CLI's login.
     pub async fn create_machine(
         self: &Arc<Self>,
         name: &str,
         size: &str,
+        account: Option<&str>,
         template: Option<&str>,
         projects: Vec<String>,
     ) -> Result<Arc<MachineRuntime>> {
         if !valid_name(name) {
             bail!("machine names are 1-32 lowercase letters, digits or dashes, starting with a letter or digit");
         }
-        let port = self.reserve(name)?;
+        let account = account.map(|a| self.boat_account(a)).transpose()?;
+        let boat = self.shared.boat.for_account(account.as_ref());
+        let port = self.reserve(name, account.as_ref())?;
         self.shared.changed();
         let result = async {
             let version = self.shared.t3.version().await?;
             let record = provision::create(
-                &self.shared.boat,
+                &boat,
                 name,
                 size,
                 &version,
@@ -358,13 +397,13 @@ impl App {
         let leftover = {
             let mut creating = self.creating.lock().unwrap();
             let sandbox = creating.iter().position(|c| c.name == name).and_then(|i| creating.remove(i).sandbox);
-            sandbox.filter(|_| result.is_err())
+            sandbox.filter(|_| result.is_err()).map(|sandbox| Leftover { sandbox, account: account.clone() })
         };
         self.leftover_sandboxes.lock().unwrap().extend(leftover.clone());
         self.shared.persist();
         self.shared.changed();
-        if let Some(id) = leftover {
-            self.delete_leftover(&id).await;
+        if let Some(leftover) = leftover {
+            self.delete_leftover(&leftover).await;
         }
         let machine = result?;
         let (app, m) = (self.clone(), machine.clone());
@@ -382,9 +421,11 @@ impl App {
         Ok(machine)
     }
 
-    /// Saved Boat snapshots a new machine can start from.
-    pub async fn templates(&self) -> Result<Vec<String>> {
-        self.shared.boat.templates().await
+    /// Saved snapshots a new machine can start from, in the settings' Boat account `account` or
+    /// the Boat CLI's own login.
+    pub async fn templates(&self, account: Option<&str>) -> Result<Vec<String>> {
+        let account = account.map(|a| self.boat_account(a)).transpose()?;
+        self.shared.boat.for_account(account.as_ref()).templates().await
     }
 
     /// This computer's T3 projects that can go to a machine: those with a git remote.
@@ -430,7 +471,7 @@ impl App {
         if !discard {
             machine.check_idle_before_delete().await?;
         }
-        let boat = &self.shared.boat;
+        let boat = &machine.boat();
         let record = {
             // Held until retired: a later wake then sees Missing, and none restores meanwhile.
             let _waking = machine.waking.lock().await;
@@ -482,6 +523,7 @@ impl App {
                 id: String::new(),
                 name: c.name.clone(),
                 size: String::new(),
+                account: c.account.as_ref().map(|a| a.name.clone()),
                 state: MachineState::Creating,
                 detail: c.step.clone(),
                 countdown: None,
@@ -529,7 +571,7 @@ impl App {
         if machine.power() == Power::Missing {
             return;
         }
-        let boat = &self.shared.boat;
+        let boat = &machine.boat();
         let sandbox = machine.sandbox_id();
         let Ok((today, this_month)) = tokio::try_join!(boat.usage_since(&sandbox, day), boat.usage_since(&sandbox, month))
         else {
@@ -558,6 +600,17 @@ impl App {
         self.shared.persist();
         self.shared.changed();
     }
+}
+
+pub fn check_settings(settings: &Settings) -> Result<()> {
+    let mut names = std::collections::HashSet::new();
+    for account in &settings.boat_accounts {
+        account.check()?;
+        if !names.insert(account.name.as_str()) {
+            bail!("two Boat accounts are called {}", account.name);
+        }
+    }
+    Ok(())
 }
 
 /// "at 14:30" today, "Tue 14:30" on another day.
@@ -701,6 +754,7 @@ fn view(m: &MachineRuntime) -> MachineView {
         id: r.id.clone(),
         name: r.name.clone(),
         size: r.size.clone(),
+        account: r.boat_account.as_ref().map(|a| a.name.clone()),
         state,
         detail,
         countdown,

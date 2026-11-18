@@ -1,7 +1,8 @@
-//! Thin wrapper over the user's own Boat CLI. Uses its existing login; never stores Boat credentials.
+//! Thin wrapper over the user's own Boat CLI. Uses its existing login, or per machine a Boat API key
+//! from the system keychain; never stores Boat credentials.
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -10,6 +11,48 @@ use crate::process::command;
 #[derive(Clone, Debug)]
 pub struct Boat {
     bin: PathBuf,
+    /// macOS's `security`, which reads keychain items.
+    security: PathBuf,
+    account: Option<BoatAccount>,
+}
+
+/// A Boat account other than the CLI's own login, chosen per machine. Holds where the key is,
+/// never the key.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoatAccount {
+    pub name: String,
+    /// Keychain service of a generic password holding a Boat API key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keychain: Option<String>,
+    /// Organization whose wallet the account's sandboxes bill to (`boat --org`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org: Option<String>,
+}
+
+impl BoatAccount {
+    /// Its values go to `security` and the Boat CLI as arguments and variables: none may read as
+    /// an option.
+    pub fn check(&self) -> Result<()> {
+        let word = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 120
+                && s.starts_with(|c: char| c.is_ascii_alphanumeric())
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        };
+        if !word(&self.name) {
+            bail!("account names are letters, digits, dots, dashes or underscores");
+        }
+        if self.keychain.is_none() && self.org.is_none() {
+            bail!("the account {} needs a keychain item, an organization or both", self.name);
+        }
+        for v in self.keychain.iter().chain(&self.org) {
+            if !word(v) {
+                bail!("not a keychain service or organization: {v}");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -73,23 +116,69 @@ impl Boat {
         installed
             .filter(|p| p.is_file())
             .or_else(|| which::which("boat").ok())
-            .map(|bin| Self { bin })
+            .map(|bin| Self { bin, security: PathBuf::from("/usr/bin/security"), account: None })
     }
 
     #[cfg(test)]
     pub fn at(bin: PathBuf) -> Self {
-        Self { bin }
+        Self { bin, security: PathBuf::from("/usr/bin/security"), account: None }
+    }
+
+    #[cfg(test)]
+    pub fn with_security(mut self, security: PathBuf) -> Self {
+        self.security = security;
+        self
+    }
+
+    /// The CLI acting as `account`; `None` is its own login.
+    pub fn for_account(&self, account: Option<&BoatAccount>) -> Self {
+        Self { account: account.cloned(), ..self.clone() }
+    }
+
+    pub fn boat_account(&self) -> Option<&BoatAccount> {
+        self.account.as_ref()
+    }
+
+    /// A CLI command as this account. The key goes to the child's environment only: never into an
+    /// argument, a file or this process's own environment.
+    async fn command(&self) -> Result<tokio::process::Command> {
+        let mut cmd = command(&self.bin);
+        cmd.env("BOAT_NO_UPDATE", "1");
+        let Some(account) = &self.account else { return Ok(cmd) };
+        if let Some(org) = &account.org {
+            cmd.env("BOAT_ORG", org);
+        }
+        if let Some(service) = &account.keychain {
+            cmd.env("BOAT_API_KEY", self.keychain_secret(service).await?);
+        }
+        Ok(cmd)
+    }
+
+    async fn keychain_secret(&self, service: &str) -> Result<String> {
+        if !cfg!(unix) {
+            bail!("Boat keys from the keychain work on macOS only");
+        }
+        let out = command(&self.security)
+            .args(["find-generic-password", "-s", service, "-w"])
+            .kill_on_drop(true)
+            .output();
+        let out = tokio::time::timeout(Duration::from_secs(20), out)
+            .await
+            .map_err(|_| anyhow!("reading {service} from the keychain timed out"))?
+            .with_context(|| format!("reading {service} from the keychain"))?;
+        let key = String::from_utf8(out.stdout).unwrap_or_default().trim().to_owned();
+        if !out.status.success() || key.is_empty() {
+            bail!("no Boat API key in the keychain under {service}");
+        }
+        Ok(key)
     }
 
     /// Runs the CLI; returns whether it succeeded, stdout and stderr.
     async fn output(&self, args: &[&str], timeout: Duration) -> Result<(bool, String, String)> {
-        let mut cmd = command(&self.bin);
+        let mut cmd = self.command().await?;
         // `--json` first: anything after `--` belongs to the remote command, and a nested
         // subcommand (`snapshot rm`) is only read as one with no option before it.
-        cmd.arg("--json")
-            .args(args)
-            .env("BOAT_NO_UPDATE", "1")
-            .kill_on_drop(true);
+        cmd.arg("--json").args(args).kill_on_drop(true);
         // Only the subcommand goes into errors: arguments can hold scripts.
         let sub = args.first().copied().unwrap_or_default();
         let out = tokio::time::timeout(timeout, cmd.output())
@@ -271,9 +360,10 @@ impl Boat {
             bail!("port {port} is in use on this computer; finish or close the other sign-in first");
         }
         let p = port.to_string();
-        let mut child = command(&self.bin)
+        let mut child = self
+            .command()
+            .await?
             .args(["forward", id, "--remote", &p, "--local", &p])
-            .env("BOAT_NO_UPDATE", "1")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
@@ -300,4 +390,52 @@ fn said<'a>(stdout: &'a str, stderr: &'a str) -> &'a str {
 /// Command-line form of a path; the Boat CLI and git only take UTF-8 here.
 pub(crate) fn path_str(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| anyhow!("path is not UTF-8: {}", path.display()))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn script(path: &Path, body: &str) {
+        std::fs::write(path, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_machine_account_reaches_boat_only_through_its_environment() {
+        let dir = std::env::temp_dir().join(format!("t3boat-boat-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("calls.log");
+        script(
+            &dir.join("security"),
+            &format!("echo \"security $*\" >> '{}'; echo team-key-123", log.display()),
+        );
+        script(
+            &dir.join("boat"),
+            &format!(
+                "echo \"boat $* key=$BOAT_API_KEY org=$BOAT_ORG\" >> '{}'; echo '{{\"sandboxes\":[]}}'",
+                log.display()
+            ),
+        );
+        let account = BoatAccount {
+            name: "team".into(),
+            keychain: Some("boat-api-key-team".into()),
+            org: Some("team-org".into()),
+        };
+        let boat = Boat::at(dir.join("boat")).with_security(dir.join("security")).for_account(Some(&account));
+        boat.list().await.unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("security find-generic-password -s boat-api-key-team -w"), "{calls}");
+        let call = calls.lines().find(|l| l.starts_with("boat ")).unwrap();
+        assert!(call.ends_with("key=team-key-123 org=team-org"), "{call}");
+        assert!(!call.trim_end_matches("key=team-key-123 org=team-org").contains("team-key-123"), "key on the command line: {call}");
+
+        std::fs::remove_file(&log).unwrap();
+        script(&dir.join("security"), "echo 'security: item not found' >&2; exit 44");
+        let err = boat.list().await.unwrap_err().to_string();
+        assert!(err.contains("boat-api-key-team"), "{err}");
+        assert!(!log.exists(), "boat ran without its account's key");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -19,6 +19,7 @@ Chat in T3 Code as usual. A message to a sleeping machine wakes it; running work
 - Sign Claude Code or Codex in on a machine with their own login
 - T3 Connect, to reach a machine from your phone or browser
 - Cost per machine, today and this month
+- Machines in another Boat account or organization, its API key read from the macOS keychain
 - An MCP server, so agents on your computer can manage machines
 
 ## What you need

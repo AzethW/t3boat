@@ -398,21 +398,25 @@ async fn create_machine(
     ui: State<'_, Ui>,
     name: String,
     size: String,
+    account: Option<String>,
     template: Option<String>,
     projects: Option<Vec<String>>,
 ) -> Res {
+    let account = account.filter(|a| !a.is_empty());
     let template = template.filter(|t| !t.trim().is_empty());
     ui.app()?
-        .create_machine(&name, &size, template.as_deref().map(str::trim), projects.unwrap_or_default())
+        .create_machine(&name, &size, account.as_deref(), template.as_deref().map(str::trim), projects.unwrap_or_default())
         .await
         .map(drop)
         .map_err(err)
 }
 
-/// Saved Boat snapshots a new machine can start from.
+/// Saved snapshots a new machine can start from, in the settings' Boat account `account` or
+/// the Boat CLI's own login.
 #[tauri::command]
-async fn templates(ui: State<'_, Ui>) -> Res<Vec<String>> {
-    ui.app()?.templates().await.map_err(err)
+async fn templates(ui: State<'_, Ui>, account: Option<String>) -> Res<Vec<String>> {
+    let account = account.filter(|a| !a.is_empty());
+    ui.app()?.templates(account.as_deref()).await.map_err(err)
 }
 
 /// This computer's T3 projects that can go to a machine.
@@ -500,10 +504,11 @@ async fn delete_machine(ui: State<'_, Ui>, id: String, discard: Option<bool>) ->
 #[tauri::command]
 async fn update_settings(handle: AppHandle, ui: State<'_, Ui>, settings: Settings) -> Res {
     let app = ui.app()?;
+    crate::app::check_settings(&settings).map_err(err)?;
     if app.settings().start_at_login != settings.start_at_login {
         apply_autostart(&handle, settings.start_at_login).map_err(|e| format!("Couldn't change start at login: {e}"))?;
     }
-    app.update_settings(settings);
+    app.update_settings(settings).map_err(err)?;
     emit_state(&handle);
     Ok(())
 }

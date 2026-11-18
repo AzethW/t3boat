@@ -184,6 +184,7 @@ pub async fn create(
         created_at: chrono::Utc::now().timestamp(),
         next_due_at: None,
         connect: false,
+        boat_account: boat.boat_account().cloned(),
     })
 }
 

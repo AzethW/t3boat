@@ -186,9 +186,11 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
 
   const addMcp = (client: McpClient) => call("add_mcp", { client }).catch((e) => toast(errorText(e)));
 
-  const create = (name: string, size: string, template: string, projects: string[]) => {
+  const create = (name: string, size: string, account: string, template: string, projects: string[]) => {
     setView("list");
-    call("create_machine", { name, size, template: template || undefined, projects }).catch((e) => toast(errorText(e)));
+    call("create_machine", { name, size, account: account || undefined, template: template || undefined, projects }).catch((e) =>
+      toast(errorText(e)),
+    );
   };
 
   return (

@@ -144,9 +144,9 @@ function BoatAccounts({ accounts, onChange }: { accounts: BoatAccount[]; onChang
     onChange([...accounts, { name: draft.name, keychain: draft.keychain || undefined, org: draft.org || undefined }]);
     setDraft({ name: "", keychain: "", org: "" });
   };
-  const field = (key: keyof typeof draft, placeholder: string) => (
+  const field = (key: keyof typeof draft, placeholder: string, label: string) => (
     <input
-      aria-label={placeholder}
+      aria-label={label}
       className="account-input"
       placeholder={placeholder}
       value={draft[key]}
@@ -172,9 +172,9 @@ function BoatAccounts({ accounts, onChange }: { accounts: BoatAccount[]; onChang
         </div>
       ))}
       <div className="account-form">
-        {field("name", "name")}
-        {field("keychain", "keychain service")}
-        {field("org", "organization")}
+        {field("name", "name", "Account name")}
+        {field("keychain", "keychain", "Keychain service of the Boat API key")}
+        {field("org", "org", "Boat organization")}
         <button className="btn btn-sm btn-outline" disabled={!draft.name || !!problem} onClick={add}>
           Add
         </button>

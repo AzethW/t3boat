@@ -411,7 +411,7 @@ fn panel_origin(
     let (w, h) = if points { panel } else { (panel.0 * monitor.scale, panel.1 * monitor.scale) };
     let gap = GAP * if points { 1.0 } else { monitor.scale };
     let x = (ix + iw / 2.0 - w / 2.0).clamp(mx + gap, (mx + mw - w - gap).max(mx + gap));
-    let y = if iy + ih / 2.0 < my + mh / 2.0 { iy + ih + gap } else { iy - h - gap };
+    let y = if iy < my + mh / 2.0 { iy + ih + gap } else { iy - h - gap };
     Some((x, y))
 }
 

@@ -142,6 +142,7 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
               </span>
               <input
                 aria-label="Saved snapshot name or share code"
+                required
                 value={template}
                 placeholder="snapshot name or bsh_ share code"
                 onChange={(e) => setTemplate(e.target.value.replace(/\s/g, ""))}
@@ -223,23 +224,24 @@ function templateLabel(t: Template): string {
   return [t.name, date, size].filter(Boolean).join(" · ");
 }
 
-/** The account's saved Boat snapshots, read again for each account. */
-function useTemplates(account: string): { list: Template[]; loading: boolean; error: string | null } {
-  const [state, setState] = useState<{ list: Template[]; loading: boolean; error: string | null }>({
-    list: [],
-    loading: true,
-    error: null,
-  });
+interface Templates {
+  list: Template[];
+  loading: boolean;
+  error: string | null;
+}
+
+/** The account's saved Boat snapshots, read again for each account; another account's never show. */
+function useTemplates(account: string): Templates {
+  const [read, setRead] = useState<Templates & { account: string | null }>({ account: null, list: [], loading: true, error: null });
   useEffect(() => {
     let live = true;
-    setState({ list: [], loading: true, error: null });
     call("templates", { account: account || undefined }).then(
-      (list) => live && setState({ list, loading: false, error: null }),
-      (e) => live && setState({ list: [], loading: false, error: errorText(e) }),
+      (list) => live && setRead({ account, list, loading: false, error: null }),
+      (e) => live && setRead({ account, list: [], loading: false, error: errorText(e) }),
     );
     return () => {
       live = false;
     };
   }, [account]);
-  return state;
+  return read.account === account ? read : { list: [], loading: true, error: null };
 }

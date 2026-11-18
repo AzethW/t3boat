@@ -423,7 +423,7 @@ impl App {
 
     /// Saved snapshots a new machine can start from, in the settings' Boat account `account` or
     /// the Boat CLI's own login.
-    pub async fn templates(&self, account: Option<&str>) -> Result<Vec<String>> {
+    pub async fn templates(&self, account: Option<&str>) -> Result<Vec<crate::boat::Template>> {
         let account = account.map(|a| self.boat_account(a)).transpose()?;
         self.shared.boat.for_account(account.as_ref()).templates().await
     }

@@ -55,6 +55,13 @@ export interface Settings {
   boatAccounts: BoatAccount[];
 }
 
+/** A saved Boat snapshot a machine can start from. */
+export interface Template {
+  name: string;
+  createdAt: string | null;
+  sizeBytes: number | null; // Boat reports it for some snapshots only
+}
+
 /** A Boat account besides the CLI's own login. Holds where its key is, never the key. */
 export interface BoatAccount {
   name: string;
@@ -101,7 +108,7 @@ export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck"
 export interface Commands {
   get_state: [undefined, UiState];
   create_machine: [{ name: string; size: string; account?: string; template?: string; projects?: string[] }, void]; // account: a settings Boat account's name; template: saved Boat snapshot; projects: LocalProject ids to add once up
-  templates: [{ account?: string }, string[]]; // saved Boat snapshots a machine can start from, in that account
+  templates: [{ account?: string }, Template[]]; // saved Boat snapshots a machine can start from, in that account, newest first
   local_projects: [undefined, LocalProject[]]; // pinned first, then most recent
   add_project: [{ id: string; projectId: string }, void]; // resolves once cloned
   wake_machine: [{ id: string }, void];

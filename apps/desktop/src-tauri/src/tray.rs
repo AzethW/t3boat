@@ -414,7 +414,7 @@ async fn create_machine(
 /// Saved snapshots a new machine can start from, in the settings' Boat account `account` or
 /// the Boat CLI's own login.
 #[tauri::command]
-async fn templates(ui: State<'_, Ui>, account: Option<String>) -> Res<Vec<String>> {
+async fn templates(ui: State<'_, Ui>, account: Option<String>) -> Res<Vec<crate::boat::Template>> {
     let account = account.filter(|a| !a.is_empty());
     ui.app()?.templates(account.as_deref()).await.map_err(err)
 }

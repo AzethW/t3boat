@@ -160,7 +160,15 @@ function create(): MockBackend {
   const handlers: { [C in CommandName]: (a: CommandArgs<C>) => Promise<unknown> } = {
     get_state: async () => structuredClone(state),
 
-    templates: async () => ["android-base", "node-tools"],
+    templates: async ({ account }) => {
+      await wait(400);
+      if (account === "team")
+        return [
+          { name: "renegade-worker-base", createdAt: "2026-11-18T13:16:37Z", sizeBytes: null },
+          { name: "rng-ci-base", createdAt: "2026-11-01T09:28:48Z", sizeBytes: 12000952320 },
+        ];
+      return [{ name: "node-tools", createdAt: "2026-11-12T08:00:00Z", sizeBytes: 4200000000 }];
+    },
 
     async create_machine({ name, size, projects }) {
       if (state.machines.some((m) => m.name === name)) throw `a machine called "${name}" already exists`;

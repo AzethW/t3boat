@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { UiState } from "../types";
-import { call } from "../api";
+import type { Template, UiState } from "../types";
+import { call, errorText } from "../api";
 import { cleanName, hourly, NAME_RE, suggestName } from "../machine";
 import { Icon } from "./Icons";
 import { ProjectList, useLocalProjects } from "./ProjectPicker";
@@ -25,7 +25,12 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
   const accounts = state.settings.boatAccounts;
   const [account, setAccount] = useState("");
   const [template, setTemplate] = useState("");
+  const [typingTemplate, setTypingTemplate] = useState(false);
   const templates = useTemplates(account);
+  const pickTemplate = (value: string) => {
+    setTypingTemplate(value === TYPE_A_NAME);
+    setTemplate(value === TYPE_A_NAME ? "" : value);
+  };
 
   useEffect(() => {
     input.current?.select();
@@ -97,7 +102,7 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
             </label>
             <select id="machine-account" className="account-select" value={account} onChange={(e) => {
                 setAccount(e.target.value);
-                setTemplate("");
+                pickTemplate("");
               }}>
               <option value="">Boat CLI login</option>
               {accounts.map((a) => (
@@ -114,28 +119,44 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
           <label className="caption" htmlFor="machine-template">
             template
           </label>
-          <span className="prompt-input">
-            <span className="prompt-sign" aria-hidden>
-              $
-            </span>
-            <input
-              id="machine-template"
-              aria-describedby="machine-template-hint"
-              list="machine-templates"
-              value={template}
-              placeholder="none"
-              onChange={(e) => setTemplate(e.target.value.replace(/\s/g, ""))}
-              spellCheck={false}
-              autoComplete="off"
-            />
-          </span>
-          <datalist id="machine-templates">
-            {templates.map((t) => (
-              <option key={t} value={t} />
+          <select
+            id="machine-template"
+            className="account-select"
+            aria-describedby="machine-template-hint"
+            value={typingTemplate ? TYPE_A_NAME : template}
+            onChange={(e) => pickTemplate(e.target.value)}
+          >
+            <option value="">No template</option>
+            {templates.loading && <option disabled>Loading saved snapshots…</option>}
+            {templates.list.map((t) => (
+              <option key={t.name} value={t.name}>
+                {templateLabel(t)}
+              </option>
             ))}
-          </datalist>
-          <span id="machine-template-hint" className="hint">
-            Optional · a saved Boat snapshot the machine starts from, your tools already on it
+            <option value={TYPE_A_NAME}>Type a name…</option>
+          </select>
+          {typingTemplate && (
+            <span className="prompt-input">
+              <span className="prompt-sign" aria-hidden>
+                $
+              </span>
+              <input
+                aria-label="Saved snapshot name or share code"
+                value={template}
+                placeholder="snapshot name or bsh_ share code"
+                onChange={(e) => setTemplate(e.target.value.replace(/\s/g, ""))}
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus
+              />
+            </span>
+          )}
+          <span id="machine-template-hint" className={`hint${templates.error ? " is-error" : ""}`}>
+            {templates.error
+              ? `Couldn't list saved snapshots: ${templates.error}`
+              : !templates.loading && templates.list.length === 0
+                ? "No saved snapshots in this account · boat snapshot <id> <name> saves one"
+                : "Optional · the machine starts from a saved Boat snapshot, your tools already on it"}
           </span>
         </div>
 
@@ -191,19 +212,34 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
   );
 }
 
-/** Saved Boat snapshots, as suggestions: the field takes any name, so a failed lookup shows none. */
-function useTemplates(account: string): string[] {
-  const [list, setList] = useState<string[]>([]);
+const TYPE_A_NAME = "__type__"; // Boat names snapshots with lowercase letters, digits and dashes only
+
+const shortDate = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+/** "android-base · 18 Nov 2026 · 12.0 GB": what tells two snapshots apart when picking one. */
+function templateLabel(t: Template): string {
+  const date = t.createdAt ? shortDate.format(new Date(t.createdAt)) : null;
+  const size = t.sizeBytes ? `${(t.sizeBytes / 1e9).toFixed(1)} GB` : null;
+  return [t.name, date, size].filter(Boolean).join(" · ");
+}
+
+/** The account's saved Boat snapshots, read again for each account. */
+function useTemplates(account: string): { list: Template[]; loading: boolean; error: string | null } {
+  const [state, setState] = useState<{ list: Template[]; loading: boolean; error: string | null }>({
+    list: [],
+    loading: true,
+    error: null,
+  });
   useEffect(() => {
     let live = true;
-    setList([]);
+    setState({ list: [], loading: true, error: null });
     call("templates", { account: account || undefined }).then(
-      (t) => live && setList(t),
-      () => {},
+      (list) => live && setState({ list, loading: false, error: null }),
+      (e) => live && setState({ list: [], loading: false, error: errorText(e) }),
     );
     return () => {
       live = false;
     };
   }, [account]);
-  return list;
+  return state;
 }

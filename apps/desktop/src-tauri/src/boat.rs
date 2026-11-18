@@ -230,16 +230,8 @@ impl Boat {
 
     /// Saved snapshots a new machine can start from, by name. Leaves out the ones t3boat saves of
     /// its own machines.
-    pub async fn templates(&self) -> Result<Vec<String>> {
-        let v = Self::last_json(&self.run(&["snapshots"], Duration::from_secs(20)).await?)?;
-        let named = v["named"].as_array().map(Vec::as_slice).unwrap_or_default();
-        Ok(named
-            .iter()
-            .filter(|s| s["status"] == "ready")
-            .filter_map(|s| s["name"].as_str())
-            .filter(|n| !n.starts_with("t3boat-"))
-            .map(str::to_owned)
-            .collect())
+    pub async fn templates(&self) -> Result<Vec<Template>> {
+        Ok(templates_in(&Self::last_json(&self.run(&["snapshots"], Duration::from_secs(20)).await?)?))
     }
 
     pub async fn info(&self, id: &str) -> Result<Sandbox> {
@@ -384,6 +376,36 @@ impl Boat {
     }
 }
 
+/// A saved snapshot a machine can start from.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Template {
+    pub name: String,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Boat reports it for some snapshots only.
+    pub size_bytes: Option<u64>,
+}
+
+/// The ready saved snapshots in `boat snapshots` output, newest first, without the ones t3boat
+/// saves of its own machines at every sleep.
+fn templates_in(snapshots: &Value) -> Vec<Template> {
+    let named = snapshots["named"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut templates: Vec<Template> = named
+        .iter()
+        .filter(|s| s["status"] == "ready")
+        .filter_map(|s| {
+            Some(Template {
+                name: s["name"].as_str()?.to_owned(),
+                created_at: s["createdAt"].as_str().and_then(|t| t.parse().ok()),
+                size_bytes: s["sizeBytes"].as_u64(),
+            })
+        })
+        .filter(|t| !t.name.starts_with("t3boat-"))
+        .collect();
+    templates.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    templates
+}
+
 /// What a failed command said: its stderr, else its stdout.
 fn said<'a>(stdout: &'a str, stderr: &'a str) -> &'a str {
     if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
@@ -439,5 +461,20 @@ mod tests {
         assert!(err.contains("boat-api-key-team"), "{err}");
         assert!(!log.exists(), "boat ran without its account's key");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn templates_are_the_ready_saved_snapshots_newest_first_without_sleep_snapshots() {
+        let snapshots = serde_json::json!({ "named": [
+            { "name": "rng-ci-base", "status": "ready", "createdAt": "2026-11-01T09:28:48.409Z", "sizeBytes": 12000952320u64 },
+            { "name": "t3boat-abnahme-bx-zedhjqwe", "status": "ready", "createdAt": "2026-11-18T18:02:40.000Z" },
+            { "name": "half-saved", "status": "saving", "createdAt": "2026-11-18T18:05:00.000Z" },
+            { "name": "rng-android-qa-base", "status": "ready", "createdAt": "2026-11-18T13:16:37.708Z" },
+        ]});
+        let templates = templates_in(&snapshots);
+        let names: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["rng-android-qa-base", "rng-ci-base"]);
+        assert_eq!(templates[1].size_bytes, Some(12000952320));
+        assert_eq!(templates[0].size_bytes, None);
     }
 }

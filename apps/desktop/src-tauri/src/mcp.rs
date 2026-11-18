@@ -67,6 +67,7 @@ enum Call {
         projects: Vec<String>,
     },
     ListProjects {},
+    ListTemplates { account: Option<String> },
     AddProject { machine: String, project: String },
     WakeMachine { machine: String },
     SleepMachine { machine: String },
@@ -195,11 +196,19 @@ fn tool_list() -> Value {
             json!({
                 "name": { "type": "string", "description": "Unique machine name" },
                 "size": size("Defaults to default"),
-                "template": { "type": "string", "description": "A saved Boat snapshot (`boat snapshot <id> <name>`) the machine's disk starts from, with tools already installed. Omit for a plain machine" },
+                "template": { "type": "string", "description": "A saved Boat snapshot (`boat snapshot <id> <name>`) the machine's disk starts from, with tools already installed (list_templates lists them). Omit for a plain machine" },
                 "account": { "type": "string", "description": "Name of a Boat account from t3boat's settings (list_machines lists them under boatAccounts) to create it in. Omit for the Boat CLI's own login" },
                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Project ids from list_projects" },
             }),
             &["name"],
+        ),
+        tool(
+            "list_templates",
+            "Saved Boat snapshots a new machine can start from (create_machine's template), newest \
+             first: name, createdAt and sizeBytes when Boat reports it. `account`: a Boat account from \
+             t3boat's settings, as on create_machine; omit for the Boat CLI's own login.",
+            json!({ "account": { "type": "string", "description": "Boat account name from t3boat's settings" } }),
+            &[],
         ),
         tool(
             "list_projects",
@@ -371,6 +380,7 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
             )
         }
         Call::ListProjects {} => serde_json::to_string(&app.local_projects().await?)?,
+        Call::ListTemplates { account } => serde_json::to_string(&app.templates(account.as_deref()).await?)?,
         Call::AddProject { machine, project } => {
             let m = app.machine(&machine)?;
             let p = app.add_project(&m, &project).await?;
@@ -564,7 +574,7 @@ mod tests {
     async fn lists_tools_and_rejects_unknown_methods() {
         let tools = rpc("tools/list", json!({})).await["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 16);
         assert!(names.contains(&"sign_in_agent") && names.contains(&"delete_machine"));
         assert_eq!(rpc("ping", json!({})).await["result"], json!({}));
         assert_eq!(rpc("resources/list", json!({})).await["error"]["code"], -32601);

@@ -39,16 +39,29 @@ struct Ui {
     init_lock: tokio::sync::Mutex<()>,
     /// When the panel last hid because it lost focus.
     blurred_at: Mutex<Option<Instant>>,
+    /// The press on the tray icon now held down found the panel open: its release closes it.
+    closing_press: AtomicBool,
 }
 
-/// Pressing on the tray icon takes the panel's focus, so it hides before the click that follows
-/// arrives; a click this soon after is that same click, closing it.
-const CLICK_AFTER_BLUR: Duration = Duration::from_millis(500);
+/// Pressing on the tray icon takes the panel's focus, which may hide it just before the press
+/// itself arrives; a hide this recent was caused by that press.
+const BLUR_BEFORE_PRESS: Duration = Duration::from_millis(250);
 
-/// Toggles the panel from a click on the tray icon.
+/// A press on the tray icon: decides whether its click closes the panel, before the focus change
+/// the press causes can hide it.
+fn tray_pressed(handle: &AppHandle) {
+    let ui = handle.state::<Ui>();
+    let open = handle.get_webview_window(PANEL).is_some_and(|p| p.is_visible().unwrap_or(false));
+    let just_hidden = ui.blurred_at.lock().unwrap().take().is_some_and(|at| at.elapsed() < BLUR_BEFORE_PRESS);
+    ui.closing_press.store(open || just_hidden, Ordering::Relaxed);
+}
+
+/// The click on the tray icon: closes the panel when its press found it open, else opens it.
 fn tray_clicked(handle: &AppHandle, anchor: Anchor) {
-    let blurred_at = handle.state::<Ui>().blurred_at.lock().unwrap().take();
-    if blurred_at.is_some_and(|at| at.elapsed() < CLICK_AFTER_BLUR) {
+    if handle.state::<Ui>().closing_press.swap(false, Ordering::Relaxed) {
+        if let Some(panel) = handle.get_webview_window(PANEL) {
+            let _ = panel.hide();
+        }
         return;
     }
     toggle_panel(handle, Some(anchor));
@@ -707,17 +720,18 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Down, .. } => {
+                        tray_pressed(tray.app_handle());
+                    }
+                    TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         rect,
                         position,
                         ..
-                    } = event
-                    {
-                        tray_clicked(tray.app_handle(), Anchor { icon: rect, cursor: position });
-                    }
+                    } => tray_clicked(tray.app_handle(), Anchor { icon: rect, cursor: position }),
+                    _ => {}
                 })
                 .build(app)?;
 

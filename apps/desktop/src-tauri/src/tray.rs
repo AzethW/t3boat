@@ -328,58 +328,114 @@ fn present(window: &gtk::ApplicationWindow) {
 }
 
 /// A dropdown card under the tray icon (above it for a bottom taskbar), kept on its screen.
-///
-/// macOS reports the icon in points times its own screen's scale and each monitor in points
-/// times its scale, so with mixed scales those "physical" ranges overlap: there everything is
-/// worked out in points. Elsewhere physical coordinates are one consistent space.
 fn panel_position(handle: &AppHandle, panel: &tauri::WebviewWindow, a: &Anchor) -> Option<tauri::Position> {
-    const GAP: f64 = 6.0;
-    let monitors = handle.available_monitors().ok()?;
-    let unit = |m: &tauri::Monitor| if cfg!(target_os = "macos") { m.scale_factor() } else { 1.0 };
-    let icon_in = |m: &tauri::Monitor| {
-        let (at, size) = (a.icon.position.to_physical::<f64>(m.scale_factor()), a.icon.size.to_physical::<f64>(m.scale_factor()));
-        let u = unit(m);
-        (at.x / u, at.y / u, size.width / u, size.height / u)
-    };
-    let bounds = |m: &tauri::Monitor| {
-        let u = unit(m);
-        let (p, s) = (m.position(), m.size());
-        (f64::from(p.x) / u, f64::from(p.y) / u, f64::from(s.width) / u, f64::from(s.height) / u)
-    };
-    let contains = |m: &tauri::Monitor| {
-        let (x, y, ..) = icon_in(m);
-        let (mx, my, mw, mh) = bounds(m);
-        x >= mx && x < mx + mw && y >= my && y < my + mh
-    };
-    let monitor = if cfg!(target_os = "macos") {
-        // Of the screens that could hold it, the one where the icon is menu-bar tall.
-        const MENU_BAR_PT: f64 = 24.0;
-        monitors.iter().filter(|m| contains(m)).min_by(|x, y| {
-            let off = |m: &tauri::Monitor| (icon_in(m).3 / MENU_BAR_PT).ln().abs();
-            off(x).total_cmp(&off(y))
+    let monitors: Vec<Screen> = (handle.available_monitors().ok()?.iter())
+        .map(|m| Screen {
+            position: (f64::from(m.position().x), f64::from(m.position().y)),
+            size: (f64::from(m.size().width), f64::from(m.size().height)),
+            scale: m.scale_factor(),
         })
-    } else {
-        monitors.iter().find(|m| {
-            let (mx, my, mw, mh) = bounds(m);
-            a.cursor.x >= mx && a.cursor.x < mx + mw && a.cursor.y >= my && a.cursor.y < my + mh
-        })
-    }?;
-    let (ix, iy, iw, ih) = icon_in(monitor);
-    let (mx, my, mw, mh) = bounds(monitor);
+        .collect();
+    // Physical icon coordinates are the same for every scale: `to_physical` only converts logical ones.
+    let at = a.icon.position.to_physical::<f64>(1.0);
+    let size = a.icon.size.to_physical::<f64>(1.0);
     let logical = panel.outer_size().ok()?.to_logical::<f64>(panel.scale_factor().ok()?);
-    let (w, h) = if cfg!(target_os = "macos") {
-        (logical.width, logical.height)
-    } else {
-        (logical.width * monitor.scale_factor(), logical.height * monitor.scale_factor())
-    };
-    let gap = GAP * if cfg!(target_os = "macos") { 1.0 } else { monitor.scale_factor() };
-    let x = (ix + iw / 2.0 - w / 2.0).clamp(mx + gap, (mx + mw - w - gap).max(mx + gap));
-    let y = if iy < my + mh / 2.0 { iy + ih + gap } else { iy - h - gap };
-    Some(if cfg!(target_os = "macos") {
+    let points = cfg!(target_os = "macos");
+    let (x, y) = panel_origin(
+        (at.x, at.y, size.width, size.height),
+        (a.cursor.x, a.cursor.y),
+        &monitors,
+        (logical.width, logical.height),
+        points,
+    )?;
+    Some(if points {
         tauri::Position::Logical(tauri::LogicalPosition::new(x, y))
     } else {
         tauri::Position::Physical(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
     })
+}
+
+/// A monitor in physical pixels, as tao reports it.
+struct Screen {
+    position: (f64, f64),
+    size: (f64, f64),
+    scale: f64,
+}
+
+/// The panel's top-left corner: in points on macOS (`points`), else in physical pixels.
+///
+/// macOS reports the icon in points times its own screen's scale and each monitor in points
+/// times its scale, so with mixed scales those "physical" ranges overlap: there everything is
+/// worked out in points. Elsewhere physical coordinates are one consistent space. Since macOS 26
+/// the status item's window is taller than the menu bar and starts above the screen's top edge,
+/// so the icon's centre, not its corner, says which screen it is on.
+fn panel_origin(
+    icon: (f64, f64, f64, f64),
+    cursor: (f64, f64),
+    monitors: &[Screen],
+    panel: (f64, f64),
+    points: bool,
+) -> Option<(f64, f64)> {
+    const GAP: f64 = 6.0;
+    let unit = |m: &Screen| if points { m.scale } else { 1.0 };
+    let icon_in = |m: &Screen| {
+        let u = unit(m);
+        (icon.0 / u, icon.1 / u, icon.2 / u, icon.3 / u)
+    };
+    let bounds = |m: &Screen| {
+        let u = unit(m);
+        (m.position.0 / u, m.position.1 / u, m.size.0 / u, m.size.1 / u)
+    };
+    let holds = |m: &Screen, (x, y): (f64, f64)| {
+        let (mx, my, mw, mh) = bounds(m);
+        x >= mx && x < mx + mw && y >= my && y < my + mh
+    };
+    let monitor = if points {
+        // Of the screens that could hold it, the one where the icon is menu-bar tall.
+        const MENU_BAR_PT: f64 = 30.0;
+        monitors
+            .iter()
+            .filter(|m| {
+                let (x, y, w, h) = icon_in(m);
+                holds(m, (x + w / 2.0, y + h / 2.0))
+            })
+            .min_by(|x, y| {
+                let off = |m: &Screen| (icon_in(m).3 / MENU_BAR_PT).ln().abs();
+                off(x).total_cmp(&off(y))
+            })
+    } else {
+        monitors.iter().find(|m| holds(m, cursor))
+    }?;
+    let (ix, iy, iw, ih) = icon_in(monitor);
+    let (mx, my, mw, mh) = bounds(monitor);
+    let (w, h) = if points { panel } else { (panel.0 * monitor.scale, panel.1 * monitor.scale) };
+    let gap = GAP * if points { 1.0 } else { monitor.scale };
+    let x = (ix + iw / 2.0 - w / 2.0).clamp(mx + gap, (mx + mw - w - gap).max(mx + gap));
+    let y = if iy + ih / 2.0 < my + mh / 2.0 { iy + ih + gap } else { iy - h - gap };
+    Some((x, y))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{panel_origin, Screen};
+
+    /// Max's screens, measured on macOS 26: a 3840×1080 pt main screen at 2x and a 1920×1080
+    /// screen at 1x above it to the left; the status item's window is 24×33 pt and starts 1 pt
+    /// above the top of its screen.
+    fn screens() -> Vec<Screen> {
+        vec![
+            Screen { position: (0.0, 0.0), size: (7680.0, 2160.0), scale: 2.0 },
+            Screen { position: (-1920.0, -1080.0), size: (1920.0, 1080.0), scale: 1.0 },
+        ]
+    }
+
+    #[test]
+    fn the_panel_hangs_under_the_icon_on_the_screen_it_was_clicked_on() {
+        let main = panel_origin((5214.0, -2.0, 48.0, 66.0), (5230.0, 20.0), &screens(), (380.0, 560.0), true);
+        assert_eq!(main, Some((2429.0, 38.0)));
+        let side = panel_origin((-500.0, -1081.0, 24.0, 33.0), (-490.0, -1070.0), &screens(), (380.0, 560.0), true);
+        assert_eq!(side, Some((-678.0, -1042.0)));
+    }
 }
 
 type Res<T = ()> = Result<T, String>;

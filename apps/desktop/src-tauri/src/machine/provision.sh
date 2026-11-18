@@ -43,9 +43,10 @@ if [ "$(cat /etc/machine-info 2>/dev/null || true)" != "$machine_info" ]; then
 fi
 # Boat gives the sandbox's variables (the Boat environment's, gateway keys included, and BOAT_ID)
 # only to shells: /run/ascii-secrets/env.sh, sourced by ~/.bashrc and written about half a minute
-# after the user's services start. T3 is a service, so its agents would not see them. A oneshot
-# waits for the file and imports its variables into the user manager before T3 starts. They stay
-# in memory and /run, never on the disk a snapshot keeps.
+# after the user's services start, and again whenever Boat changes them (a resume, an environment
+# upgrade). T3 is a service, so its agents would not see them. A oneshot waits for the file and
+# imports its variables into the user manager before T3 starts; a path unit imports a changed file
+# again and restarts T3 with it. They stay in memory and /run, never on the disk a snapshot keeps.
 changed_units=""
 put_unit() {
   if [ "$(cat "$1" 2>/dev/null || true)" != "$2" ]; then
@@ -56,21 +57,33 @@ put_unit() {
 }
 put_unit "$boat_dir/boat-env.sh" "$(cat <<'SCRIPT'
 #!/bin/bash
+# boat-env.sh [refresh]. Names start with __t3boat_: the sourced file must not overwrite them.
 set -u
-file=/run/ascii-secrets/env.sh
-names_file="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/t3boat-boat-env.names"
-for _ in $(seq 1 90); do [ -r "$file" ] && break; sleep 1; done
-if [ -s "$names_file" ]; then systemctl --user unset-environment $(cat "$names_file"); fi
-[ -r "$file" ] || exit 0
-names=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$file" | sort -u)
-. "$file"
+__t3boat_file=/run/ascii-secrets/env.sh
+__t3boat_run="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+__t3boat_mode="${1:-}"
+for _ in $(seq 1 90); do [ -r "$__t3boat_file" ] && break; sleep 1; done
+[ -r "$__t3boat_file" ] || exit 0
+__t3boat_sum=$(sha256sum "$__t3boat_file" | cut -d' ' -f1)
+if [ "$__t3boat_mode" = refresh ] && [ "$__t3boat_sum" = "$(cat "$__t3boat_run/t3boat-boat-env.sum" 2>/dev/null)" ]; then
+  exit 0
+fi
+__t3boat_names=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$__t3boat_file" | sort -u)
+. "$__t3boat_file" || exit 1
 # As ~/.bashrc does: a Claude sign-in on the machine wins over the variables.
 if [ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]; then
   unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 fi
-set_names=$(for n in $names; do [ -n "${!n+x}" ] && echo "$n"; done)
-[ -z "$set_names" ] || systemctl --user import-environment $set_names
-printf '%s\n' $set_names >"$names_file"
+__t3boat_set=$(for __t3boat_n in $__t3boat_names; do [ -n "${!__t3boat_n+x}" ] && echo "$__t3boat_n"; done)
+if [ -s "$__t3boat_run/t3boat-boat-env.names" ]; then
+  systemctl --user unset-environment $(cat "$__t3boat_run/t3boat-boat-env.names") || exit 1
+fi
+if [ -n "$__t3boat_set" ]; then
+  systemctl --user import-environment $__t3boat_set || exit 1
+fi
+printf '%s\n' $__t3boat_set >"$__t3boat_run/t3boat-boat-env.names"
+echo "$__t3boat_sum" >"$__t3boat_run/t3boat-boat-env.sum"
+if [ "$__t3boat_mode" = refresh ]; then systemctl --user try-restart t3code.service; fi
 SCRIPT
 )"
 put_unit "$units/t3boat-boat-env.service" "$(cat <<'UNIT'
@@ -88,6 +101,28 @@ ExecStart=/bin/bash %h/.t3boat/boat-env.sh
 WantedBy=default.target
 UNIT
 )"
+put_unit "$units/t3boat-boat-env-refresh.service" "$(cat <<'UNIT'
+[Unit]
+Description=t3boat: T3 again with the Boat environment's changed variables
+After=t3boat-boat-env.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/.t3boat/boat-env.sh refresh
+UNIT
+)"
+put_unit "$units/t3boat-boat-env.path" "$(cat <<'UNIT'
+[Unit]
+Description=t3boat: watches the Boat environment's variables
+
+[Path]
+PathChanged=/run/ascii-secrets/env.sh
+Unit=t3boat-boat-env-refresh.service
+
+[Install]
+WantedBy=default.target
+UNIT
+)"
 put_unit "$units/t3code.service.d/t3boat-boat-env.conf" "$(cat <<'UNIT'
 [Unit]
 Wants=t3boat-boat-env.service
@@ -95,7 +130,8 @@ After=t3boat-boat-env.service
 UNIT
 )"
 systemctl --user daemon-reload
-systemctl --user enable t3boat-boat-env.service >/dev/null 2>&1
+systemctl --user enable t3boat-boat-env.service t3boat-boat-env.path >/dev/null 2>&1
+systemctl --user start t3boat-boat-env.path
 if [ -n "$changed_units" ] || ! systemctl --user is-active --quiet t3boat-boat-env.service; then
   systemctl --user restart t3boat-boat-env.service
   restart_t3=1

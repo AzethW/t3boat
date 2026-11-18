@@ -8,7 +8,7 @@ T3 Code ──ws──> localhost proxy (t3boat) ──https/wss──> T3 serve
                     └─ boat CLI: new / resume / host / exec / delete
 ```
 
-- **Machine**: a Boat sandbox running the T3 server pinned to your desktop app's version, as a systemd user service bound to loopback. Boat relays a public HTTPS URL to it; T3's own pairing auth protects it.
+- **Machine**: a Boat sandbox running the T3 server pinned to your desktop app's version, as a systemd user service bound to loopback. It can start from a template: a saved Boat snapshot (`boat new --from`) with the user's own tools on it. If that disk already ran T3, the machine drops T3's state from it as it is created, so it gets its own environment id, sessions and chats. Boat relays a public HTTPS URL to it; T3's own pairing auth protects it.
 - **Proxy** (`src-tauri/src/proxy`): one `http://localhost:<port>` per machine; that is the address T3 Code pairs with, so a new sandbox IP after resume never matters. The proxy is its own auth server towards T3 Code and uses its own long-lived token upstream.
   - Awake: frames pass through (minus `directEndpoints`, which would let T3 Code bypass the proxy). Snapshot-style subscriptions and some reads are recorded, and the images T3 Code loads are kept on this computer (`proxy/assets.rs`).
   - Asleep: answers pings, probes, config and other recorded subscriptions, and serves the shell and the chats from the state captured as the machine went to sleep, so opening a chat does not wake it. Images shown before stay visible.

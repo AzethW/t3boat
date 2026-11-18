@@ -14,7 +14,7 @@ Chat in T3 Code as usual. A message to a sleeping machine wakes it; running work
 
 ## What you get
 
-- Create, resize and delete machines from the menu bar
+- Create, resize and delete machines from the menu bar, plain or from a saved Boat snapshot with your tools on it
 - Add projects the way T3 Code's "Add to another machine" does, `.env` files included
 - Sign Claude Code or Codex in on a machine with their own login
 - T3 Connect, to reach a machine from your phone or browser

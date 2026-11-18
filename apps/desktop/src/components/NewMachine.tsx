@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { UiState } from "../types";
+import { call } from "../api";
 import { cleanName, hourly, NAME_RE, suggestName } from "../machine";
 import { Icon } from "./Icons";
 import { ProjectList, useLocalProjects } from "./ProjectPicker";
@@ -8,7 +9,7 @@ import { SubHeader } from "./SubHeader";
 interface Props {
   state: UiState;
   onNameChange: (name: string) => void;
-  onCreate: (name: string, size: string, projects: string[]) => void;
+  onCreate: (name: string, size: string, template: string, projects: string[]) => void;
   onBack: () => void;
 }
 
@@ -21,6 +22,8 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
   const projects = useLocalProjects();
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const [template, setTemplate] = useState("");
+  const templates = useTemplates();
 
   useEffect(() => {
     input.current?.select();
@@ -37,7 +40,7 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!problem && size) onCreate(name, size, picked);
+    if (!problem && size) onCreate(name, size, template.trim(), picked);
   };
 
   return (
@@ -84,6 +87,35 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
             Billed only while awake · sleeps 5 min after agents finish · resize anytime
           </span>
         </fieldset>
+
+        <div className="field">
+          <label className="caption" htmlFor="machine-template">
+            template
+          </label>
+          <span className="prompt-input">
+            <span className="prompt-sign" aria-hidden>
+              $
+            </span>
+            <input
+              id="machine-template"
+              aria-describedby="machine-template-hint"
+              list="machine-templates"
+              value={template}
+              placeholder="none"
+              onChange={(e) => setTemplate(e.target.value.replace(/\s/g, ""))}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </span>
+          <datalist id="machine-templates">
+            {templates.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+          <span id="machine-template-hint" className="hint">
+            Optional · a saved Boat snapshot the machine starts from, your tools already on it
+          </span>
+        </div>
 
         <fieldset className="field">
           <legend className="caption">projects</legend>
@@ -135,4 +167,20 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
       </div>
     </form>
   );
+}
+
+/** Saved Boat snapshots, as suggestions: the field takes any name, so a failed lookup shows none. */
+function useTemplates(): string[] {
+  const [list, setList] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    call("templates", undefined).then(
+      (t) => live && setList(t),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  return list;
 }

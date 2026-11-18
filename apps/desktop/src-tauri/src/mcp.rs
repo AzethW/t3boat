@@ -61,6 +61,7 @@ enum Call {
     CreateMachine {
         name: String,
         size: Option<String>,
+        template: Option<String>,
         #[serde(default)]
         projects: Vec<String>,
     },
@@ -193,6 +194,7 @@ fn tool_list() -> Value {
             json!({
                 "name": { "type": "string", "description": "Unique machine name" },
                 "size": size("Defaults to default"),
+                "template": { "type": "string", "description": "A saved Boat snapshot (`boat snapshot <id> <name>`) the machine's disk starts from, with tools already installed. Omit for a plain machine" },
                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Project ids from list_projects" },
             }),
             &["name"],
@@ -353,8 +355,8 @@ impl Tools for App {
 async fn run(app: &Arc<App>, call: Call) -> Result<String> {
     Ok(match call {
         Call::ListMachines {} => json!({ "machines": app.views(), "costs": app.costs() }).to_string(),
-        Call::CreateMachine { name, size, projects } => {
-            let m = app.create_machine(&name, size.as_deref().unwrap_or("default"), projects).await?;
+        Call::CreateMachine { name, size, template, projects } => {
+            let m = app.create_machine(&name, size.as_deref().unwrap_or("default"), template.as_deref(), projects).await?;
             format!(
                 "Created {} ({}). T3 Code now asks the user to add it as a backend; tell them to confirm.",
                 m.record().name,
@@ -566,7 +568,7 @@ mod tests {
         let r = rpc("tools/call", json!({ "name": "list_machines" })).await;
         assert_eq!(r["result"], content("ListMachines".into(), false));
         let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev" } })).await;
-        assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, projects: [] }"#);
+        assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, template: None, projects: [] }"#);
         let r = rpc("tools/call", json!({ "name": "sleep_machine", "arguments": { "machine": "dev" } })).await;
         assert_eq!(r["result"], content("an agent is working".into(), true));
         let r = rpc("tools/call", json!({ "name": "resize_machine", "arguments": { "machine": "dev", "size": "huge" } })).await;

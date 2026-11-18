@@ -91,7 +91,8 @@ export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck"
 
 export interface Commands {
   get_state: [undefined, UiState];
-  create_machine: [{ name: string; size: string; projects?: string[] }, void]; // projects: LocalProject ids to add once up
+  create_machine: [{ name: string; size: string; template?: string; projects?: string[] }, void]; // template: saved Boat snapshot; projects: LocalProject ids to add once up
+  templates: [undefined, string[]]; // saved Boat snapshots a machine can start from
   local_projects: [undefined, LocalProject[]]; // pinned first, then most recent
   add_project: [{ id: string; projectId: string }, void]; // resolves once cloned
   wake_machine: [{ id: string }, void];

@@ -394,8 +394,25 @@ fn get_state(ui: State<'_, Ui>) -> UiState {
 }
 
 #[tauri::command]
-async fn create_machine(ui: State<'_, Ui>, name: String, size: String, projects: Option<Vec<String>>) -> Res {
-    ui.app()?.create_machine(&name, &size, projects.unwrap_or_default()).await.map(drop).map_err(err)
+async fn create_machine(
+    ui: State<'_, Ui>,
+    name: String,
+    size: String,
+    template: Option<String>,
+    projects: Option<Vec<String>>,
+) -> Res {
+    let template = template.filter(|t| !t.trim().is_empty());
+    ui.app()?
+        .create_machine(&name, &size, template.as_deref().map(str::trim), projects.unwrap_or_default())
+        .await
+        .map(drop)
+        .map_err(err)
+}
+
+/// Saved Boat snapshots a new machine can start from.
+#[tauri::command]
+async fn templates(ui: State<'_, Ui>) -> Res<Vec<String>> {
+    ui.app()?.templates().await.map_err(err)
 }
 
 /// This computer's T3 projects that can go to a machine.
@@ -577,6 +594,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_state,
             create_machine,
+            templates,
             local_projects,
             add_project,
             wake_machine,

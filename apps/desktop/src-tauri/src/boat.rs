@@ -76,6 +76,11 @@ impl Boat {
             .map(|bin| Self { bin })
     }
 
+    #[cfg(test)]
+    pub fn at(bin: PathBuf) -> Self {
+        Self { bin }
+    }
+
     /// Runs the CLI; returns whether it succeeded, stdout and stderr.
     async fn output(&self, args: &[&str], timeout: Duration) -> Result<(bool, String, String)> {
         let mut cmd = command(&self.bin);
@@ -130,6 +135,20 @@ impl Boat {
         let v = Self::last_json(&out)?;
         let id = v["id"].as_str().ok_or_else(|| anyhow!("boat new returned no id"))?;
         Ok(id.to_owned())
+    }
+
+    /// Saved snapshots a new machine can start from, by name. Leaves out the ones t3boat saves of
+    /// its own machines.
+    pub async fn templates(&self) -> Result<Vec<String>> {
+        let v = Self::last_json(&self.run(&["snapshots"], Duration::from_secs(20)).await?)?;
+        let named = v["named"].as_array().map(Vec::as_slice).unwrap_or_default();
+        Ok(named
+            .iter()
+            .filter(|s| s["status"] == "ready")
+            .filter_map(|s| s["name"].as_str())
+            .filter(|n| !n.starts_with("t3boat-"))
+            .map(str::to_owned)
+            .collect())
     }
 
     pub async fn info(&self, id: &str) -> Result<Sandbox> {

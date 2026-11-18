@@ -10,6 +10,13 @@ here="$(cd "$(dirname "$0")" && pwd)"
 t3="$HOME/.local/bin/t3"
 boat_dir="$HOME/.t3boat"
 units="$HOME/.config/systemd/user"
+
+# A new machine whose disk came from a template that ran T3 would share that server's identity
+# (environment id, sessions, chats, links) with every other machine made from it.
+if [ "$mint_upstream" = 1 ] && [ -e "$HOME/.t3/userdata/environment-id" ]; then
+  systemctl --user stop t3boat-watchdog.service t3code.service 2>/dev/null || true
+  rm -rf "$HOME/.t3/userdata" "$boat_dir"
+fi
 mkdir -p "$boat_dir" "$units" "$HOME/.t3/userdata"
 chmod 700 "$boat_dir"
 

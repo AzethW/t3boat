@@ -117,6 +117,18 @@ fn shell_word(s: &str) -> Result<&str> {
     Ok(s)
 }
 
+/// A saved snapshot's name or share code. It goes to `boat new --from` as an argument, so it must
+/// not read as one of the CLI's options.
+pub fn check_template(template: &str) -> Result<()> {
+    let ok = template.len() <= 120
+        && template.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && template.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !ok {
+        bail!("not a saved snapshot name: {template}");
+    }
+    Ok(())
+}
+
 /// Hosts the T3 server's and the watchdog's ports publicly: their URLs, in that order.
 /// Idempotent: hosting again keeps the URLs.
 pub async fn host(boat: &Boat, sandbox_id: &str) -> Result<(String, String)> {
@@ -124,20 +136,26 @@ pub async fn host(boat: &Boat, sandbox_id: &str) -> Result<(String, String)> {
 }
 
 /// Creates a new machine end to end. Takes about a minute, most of it Boat and the T3 install.
+/// `template`: a saved Boat snapshot its disk starts from, with the user's own tools on it.
 /// On failure after `created`, the caller deletes the sandbox.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     boat: &Boat,
     name: &str,
     size: &str,
     t3_version: &str,
     local_port: u16,
+    template: Option<&str>,
     created: impl FnOnce(&str),
     progress: impl Fn(&str),
 ) -> Result<Machine> {
     self::size(size)?;
+    if let Some(t) = template {
+        check_template(t)?;
+    }
     progress("Creating sandbox on Boat");
     let id = boat
-        .create(&sandbox_name(name), size, None)
+        .create(&sandbox_name(name), size, template)
         .await
         .context("creating the Boat sandbox")?;
     created(&id);
@@ -167,4 +185,66 @@ pub async fn create(
         next_due_at: None,
         connect: false,
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    /// A Boat CLI that answers like the real one and logs every call's arguments, one line each.
+    fn fake_boat(dir: &std::path::Path) -> (Boat, PathBuf) {
+        let log = dir.join("calls.log");
+        let bin = dir.join("boat");
+        let script = format!(
+            r#"#!/bin/sh
+echo "$*" >> '{log}'
+case "$2" in
+  new) printf '%s\n' '{{"id":"bx_fake"}}' ;;
+  exec) printf '%s\n' '{{"exitCode":0,"stdout":"{{\"environmentId\":\"env-1\",\"upstreamToken\":\"tok\"}}","stderr":""}}' ;;
+  host) printf '%s\n' '{{"url":"https://fake.boat.example"}}' ;;
+esac
+"#,
+            log = log.display()
+        );
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (Boat::at(bin), log)
+    }
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("t3boat-test-{}", random_token()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    async fn create_from(boat: &Boat, template: Option<&str>) -> Result<Machine> {
+        create(boat, "dev", "small", "0.1.10", 47731, template, |_| {}, |_| {}).await
+    }
+
+    #[tokio::test]
+    async fn a_machine_starts_from_the_chosen_template() {
+        let dir = temp_dir();
+        let (boat, log) = fake_boat(&dir);
+        create_from(&boat, Some("worker-base")).await.unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let new = calls.lines().find(|l| l.starts_with("--json new ")).unwrap();
+        assert!(new.ends_with("--from worker-base"), "{new}");
+
+        std::fs::remove_file(&log).unwrap();
+        create_from(&boat, None).await.unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(!calls.contains("--from"), "{calls}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_template_cannot_pass_as_a_boat_option() {
+        let dir = temp_dir();
+        let (boat, log) = fake_boat(&dir);
+        assert!(create_from(&boat, Some("--no-env")).await.is_err());
+        assert!(!log.exists(), "boat was called");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

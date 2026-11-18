@@ -159,6 +159,8 @@ function create(): MockBackend {
   const handlers: { [C in CommandName]: (a: CommandArgs<C>) => Promise<unknown> } = {
     get_state: async () => structuredClone(state),
 
+    templates: async () => ["android-base", "node-tools"],
+
     async create_machine({ name, size, projects }) {
       if (state.machines.some((m) => m.name === name)) throw `a machine called "${name}" already exists`;
       const row = machine({ id: "", name, size, state: "creating", detail: "Creating sandbox…", paired: false });

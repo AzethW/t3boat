@@ -317,8 +317,15 @@ impl App {
         self.shared.changed();
     }
 
-    /// Creates a machine, then adds this computer's T3 projects `projects` (ids) to it.
-    pub async fn create_machine(self: &Arc<Self>, name: &str, size: &str, projects: Vec<String>) -> Result<Arc<MachineRuntime>> {
+    /// Creates a machine, from the saved snapshot `template` if given, then adds this computer's
+    /// T3 projects `projects` (ids) to it.
+    pub async fn create_machine(
+        self: &Arc<Self>,
+        name: &str,
+        size: &str,
+        template: Option<&str>,
+        projects: Vec<String>,
+    ) -> Result<Arc<MachineRuntime>> {
         if !valid_name(name) {
             bail!("machine names are 1-32 lowercase letters, digits or dashes, starting with a letter or digit");
         }
@@ -332,6 +339,7 @@ impl App {
                 size,
                 &version,
                 port,
+                template,
                 |sandbox| self.set_creating_sandbox(name, sandbox),
                 |step| self.set_creating_step(name, step),
             )
@@ -372,6 +380,11 @@ impl App {
             self.shared.notify(format!("Couldn't open T3 Code for {name}"), format!("{e:#}; use Add to T3 Code"));
         }
         Ok(machine)
+    }
+
+    /// Saved Boat snapshots a new machine can start from.
+    pub async fn templates(&self) -> Result<Vec<String>> {
+        self.shared.boat.templates().await
     }
 
     /// This computer's T3 projects that can go to a machine: those with a git remote.

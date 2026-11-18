@@ -145,6 +145,8 @@ impl Boat {
         let mut cmd = command(&self.bin);
         cmd.env("BOAT_NO_UPDATE", "1");
         let Some(account) = &self.account else { return Ok(cmd) };
+        // Either one inherited from this app's environment would move the call to another account.
+        cmd.env_remove("BOAT_ORG").env_remove("BOAT_API_KEY");
         if let Some(org) = &account.org {
             cmd.env("BOAT_ORG", org);
         }

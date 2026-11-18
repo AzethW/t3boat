@@ -71,26 +71,35 @@ __t3boat_run="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 __t3boat_mode="${1:-}"
 for _ in $(seq 1 90); do [ -r "$__t3boat_file" ] && break; sleep 1; done
 [ -r "$__t3boat_file" ] || exit 0
-__t3boat_sum=$(sha256sum "$__t3boat_file" | cut -d' ' -f1)
-if [ "$__t3boat_mode" = refresh ] && [ "$__t3boat_sum" = "$(cat "$__t3boat_run/t3boat-boat-env.sum" 2>/dev/null)" ]; then
+__t3boat_import() {
+  __t3boat_names=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$__t3boat_file" | sort -u)
+  . "$__t3boat_file" || exit 1
+  # As ~/.bashrc does: a Claude sign-in on the machine wins over the variables.
+  if [ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]; then
+    unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+  fi
+  __t3boat_set=$(for __t3boat_n in $__t3boat_names; do [ -n "${!__t3boat_n+x}" ] && echo "$__t3boat_n"; done)
+  if [ -s "$__t3boat_run/t3boat-boat-env.names" ]; then
+    systemctl --user unset-environment $(cat "$__t3boat_run/t3boat-boat-env.names") || exit 1
+  fi
+  if [ -n "$__t3boat_set" ]; then
+    systemctl --user import-environment $__t3boat_set || exit 1
+  fi
+  printf '%s\n' $__t3boat_set >"$__t3boat_run/t3boat-boat-env.names"
+  echo "$1" >"$__t3boat_run/t3boat-boat-env.sum"
+}
+__t3boat_hash() { sha256sum "$__t3boat_file" | cut -d' ' -f1; }
+if [ "$__t3boat_mode" != refresh ]; then
+  __t3boat_import "$(__t3boat_hash)" || exit 1
   exit 0
 fi
-__t3boat_names=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$__t3boat_file" | sort -u)
-. "$__t3boat_file" || exit 1
-# As ~/.bashrc does: a Claude sign-in on the machine wins over the variables.
-if [ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]; then
-  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
-fi
-__t3boat_set=$(for __t3boat_n in $__t3boat_names; do [ -n "${!__t3boat_n+x}" ] && echo "$__t3boat_n"; done)
-if [ -s "$__t3boat_run/t3boat-boat-env.names" ]; then
-  systemctl --user unset-environment $(cat "$__t3boat_run/t3boat-boat-env.names") || exit 1
-fi
-if [ -n "$__t3boat_set" ]; then
-  systemctl --user import-environment $__t3boat_set || exit 1
-fi
-printf '%s\n' $__t3boat_set >"$__t3boat_run/t3boat-boat-env.names"
-echo "$__t3boat_sum" >"$__t3boat_run/t3boat-boat-env.sum"
-if [ "$__t3boat_mode" = refresh ]; then systemctl --user try-restart t3code.service; fi
+# systemd does not watch the file while this runs: a write meanwhile shows only in its hash.
+for _ in 1 2 3; do
+  __t3boat_sum=$(__t3boat_hash)
+  [ "$__t3boat_sum" = "$(cat "$__t3boat_run/t3boat-boat-env.sum" 2>/dev/null)" ] && exit 0
+  ( __t3boat_import "$__t3boat_sum" ) || exit 1
+  systemctl --user try-restart t3code.service
+done
 SCRIPT
 )"
 put_unit "$units/t3boat-boat-env.service" "$(cat <<'UNIT'
@@ -140,7 +149,8 @@ systemctl --user daemon-reload
 systemctl --user enable t3boat-boat-env.service t3boat-boat-env.path >/dev/null 2>&1
 systemctl --user start t3boat-boat-env.path
 if [ -n "$changed_units" ] || ! systemctl --user is-active --quiet t3boat-boat-env.service; then
-  systemctl --user restart t3boat-boat-env.service
+  # T3 still has to come up without them: a failed import only leaves the variables out.
+  systemctl --user restart t3boat-boat-env.service || echo "importing the Boat environment failed" >&2
   restart_t3=1
 fi
 

@@ -58,7 +58,10 @@ fn tray_pressed(handle: &AppHandle) {
 
 /// The click on the tray icon: closes the panel when its press found it open, else opens it.
 fn tray_clicked(handle: &AppHandle, anchor: Anchor) {
-    if handle.state::<Ui>().closing_press.swap(false, Ordering::Relaxed) {
+    let ui = handle.state::<Ui>();
+    // A hide that came after this click's press was caused by it too.
+    ui.blurred_at.lock().unwrap().take();
+    if ui.closing_press.swap(false, Ordering::Relaxed) {
         if let Some(panel) = handle.get_webview_window(PANEL) {
             let _ = panel.hide();
         }
@@ -721,9 +724,9 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Down, .. } => {
-                        tray_pressed(tray.app_handle());
-                    }
+                    // Windows reports the second press of a double click as `DoubleClick`.
+                    TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Down, .. }
+                    | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => tray_pressed(tray.app_handle()),
                     TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,

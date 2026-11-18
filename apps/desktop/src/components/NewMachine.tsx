@@ -95,7 +95,10 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
             <label className="caption" htmlFor="machine-account">
               boat account
             </label>
-            <select id="machine-account" className="account-select" value={account} onChange={(e) => setAccount(e.target.value)}>
+            <select id="machine-account" className="account-select" value={account} onChange={(e) => {
+                setAccount(e.target.value);
+                setTemplate("");
+              }}>
               <option value="">Boat CLI login</option>
               {accounts.map((a) => (
                 <option key={a.name} value={a.name}>

@@ -53,6 +53,41 @@ impl Agent {
     }
 }
 
+/// A shell command that ends any running `login` (a command line such as `claude auth login`).
+pub fn stop_login(login: &str) -> String {
+    format!("pkill -f '{login}'")
+}
+
+#[cfg(all(test, unix))]
+mod stop_login_tests {
+    use super::stop_login;
+    use std::process::{Command, Stdio};
+
+    /// The command runs inside `bash -lc "<script>"`, as `boat exec` runs it, so its own command
+    /// line holds the login's words too. It must end the login and carry on.
+    #[test]
+    fn ends_the_login_but_not_the_script_running_it() {
+        let login = "t3boat-test-login auth login";
+        // A stand-in for the vendor's login: a process whose command line holds `login`.
+        let mut decoy = Command::new("bash")
+            .args(["-c", &format!("exec -a '{login}' sleep 60")])
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let script = format!("{} 2>/dev/null; echo survived", stop_login(login));
+        let out = Command::new("bash").args(["-c", &script]).output().unwrap();
+        let ended = decoy.try_wait().unwrap().is_some() || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            decoy.try_wait().unwrap().is_some()
+        };
+        let _ = decoy.kill();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "survived", "the script killed itself: {:?}", out.status);
+        assert!(out.status.success(), "{:?}", out.status);
+        assert!(ended, "the login is still running");
+    }
+}
+
 /// Where a manual sign-in keeps its log and stdin on the machine; one per agent.
 fn manual_dir(agent: Agent) -> &'static str {
     match agent {

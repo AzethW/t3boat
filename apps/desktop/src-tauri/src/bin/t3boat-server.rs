@@ -302,18 +302,17 @@ async fn main() -> Result<()> {
     let router = web::router(server.clone(), changed, WebConfig { allowed_hosts, dist });
     let listener = tokio::net::TcpListener::bind(web_addr).await.with_context(|| format!("listening on {web_addr}"))?;
     tracing::info!("t3boat web UI on http://{web_addr}");
-    let saver = server.clone();
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-            tokio::select! {
-                _ = term.recv() => {}
-                _ = tokio::signal::ctrl_c() => {}
-            }
-            if let Some(app) = saver.app.lock().unwrap().clone() {
-                app.save();
-            }
-        })
-        .await?;
+    // Stop on the signal itself, not once every connection has closed: an open page's
+    // /api/events stream never closes, and systemd would wait its timeout and then kill us.
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).context("SIGTERM handler")?;
+    tokio::select! {
+        served = axum::serve(listener, router) => served?,
+        _ = term.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    if let Some(app) = server.app.lock().unwrap().clone() {
+        app.save();
+    }
+    tracing::info!("t3boat stopped");
     Ok(())
 }

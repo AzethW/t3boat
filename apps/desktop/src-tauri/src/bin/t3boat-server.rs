@@ -8,6 +8,7 @@
 //!   T3BOAT_WEB_DIST           the built UI (default: `share/t3boat/web` beside the binary)
 //!   T3BOAT_DATA_DIR           machines, settings and spend (default ~/.local/share/t3boat)
 //!   T3BOAT_MCP_ADDR           the MCP server for coding agents (default 127.0.0.1:47730)
+//!   T3BOAT_SSH_HOST           this server's SSH name, for the forward pairing shows (optional)
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -27,7 +28,7 @@ use tokio::sync::broadcast;
 const COSTS_EVERY: Duration = Duration::from_secs(300);
 const USAGE: &str = "t3boat-server: t3boat's machines and web UI, without the tray app.
 Configured from the environment: T3BOAT_WEB_ADDR, T3BOAT_WEB_ALLOWED_HOSTS, T3BOAT_WEB_DIST,
-T3BOAT_DATA_DIR, T3BOAT_MCP_ADDR (see the README).";
+T3BOAT_DATA_DIR, T3BOAT_MCP_ADDR, T3BOAT_SSH_HOST (see the README).";
 
 struct Server {
     app: Mutex<Option<Arc<App>>>,
@@ -35,6 +36,8 @@ struct Server {
     account: Mutex<Option<Account>>,
     data_dir: PathBuf,
     mcp_addr: SocketAddr,
+    /// The name another computer reaches this server by over SSH, for pairing's port forward.
+    ssh_host: Option<String>,
     changed: broadcast::Sender<()>,
     init_lock: tokio::sync::Mutex<()>,
 }
@@ -42,6 +45,14 @@ struct Server {
 impl Server {
     fn app(&self) -> Result<Arc<App>, String> {
         self.app.lock().unwrap().clone().ok_or_else(|| "t3boat is not set up yet".to_owned())
+    }
+
+    /// A pairing as the UI shows it: with the SSH name to forward the port from.
+    fn with_ssh_host(&self, mut v: Value) -> Value {
+        if let Some(o) = v.as_object_mut() {
+            o.insert("sshHost".into(), json!(self.ssh_host));
+        }
+        v
     }
 
     fn changed(&self) {
@@ -188,12 +199,12 @@ impl Commands for Server {
             "open_machine" => {
                 let app = self.app()?;
                 let machine = app.machine(&a.id).map_err(err)?;
-                Ok(json!(app.t3_link(&machine, a.thread.as_deref())))
+                Ok(self.with_ssh_host(json!(app.t3_link(&machine, a.thread.as_deref()))))
             }
             "pair_machine" => {
                 let app = self.app()?;
                 let machine = app.machine(&a.id).map_err(err)?;
-                Ok(json!(app.pairing(&machine)))
+                Ok(self.with_ssh_host(json!(app.pairing(&machine))))
             }
             "latest_thread" => Ok(json!(self.app()?.machine(&a.id).map_err(err)?.latest_thread().await)),
             "get_machine_details" => Ok(json!(self.app()?.details(&a.id).map_err(err)?)),
@@ -282,6 +293,7 @@ async fn main() -> Result<()> {
         account: Mutex::new(None),
         data_dir,
         mcp_addr,
+        ssh_host: std::env::var("T3BOAT_SSH_HOST").ok().map(|h| h.trim().to_owned()).filter(|h| !h.is_empty()),
         changed: changed.clone(),
         init_lock: tokio::sync::Mutex::new(()),
     });

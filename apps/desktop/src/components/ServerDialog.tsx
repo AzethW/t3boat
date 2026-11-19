@@ -45,7 +45,7 @@ export function ServerDialog({ task, onClose, onDone }: Props) {
 }
 
 function PairBody({ task }: { task: Extract<ServerTask, { kind: "pair" }> }) {
-  const forward = `ssh -N -L ${task.port}:localhost:${task.port} <this server>`;
+  const forward = `ssh -N -L ${task.port}:localhost:${task.port} ${task.sshHost ?? "<this server>"}`;
   return (
     <>
       <h2 id="server-dialog-title" className="server-dialog-title">

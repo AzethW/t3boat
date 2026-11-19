@@ -98,6 +98,8 @@ export interface Pairing {
   link: string;
   pairingUrl: string;
   port: number;
+  /** t3boat-server: the SSH name to forward the port from (T3BOAT_SSH_HOST); null when unset */
+  sshHost?: string | null;
 }
 
 /** Where "Open" goes, from t3boat-server: a T3 Code link, or a pairing for an unpaired machine. */

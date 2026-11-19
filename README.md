@@ -77,6 +77,7 @@ The server needs the Boat CLI signed in (`boat login`) and `t3` on `PATH` or in 
 | `T3BOAT_WEB_DIST` | `share/t3boat/web` beside the binary | the built UI |
 | `T3BOAT_DATA_DIR` | `~/.local/share/t3boat` | machines, settings and spend |
 | `T3BOAT_MCP_ADDR` | `127.0.0.1:47730` | the MCP server for coding agents on the server |
+| `T3BOAT_SSH_HOST` | none | the server's SSH name, shown in the port forward that pairing needs |
 
 The web UI has no login. Bind it to a private address, such as a tailnet one, and list the names you reach it by in `T3BOAT_WEB_ALLOWED_HOSTS`. POSTs from another site's page are refused.
 

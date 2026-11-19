@@ -186,18 +186,35 @@ fn progress(clone: &Value) -> String {
     parts.join(" · ")
 }
 
-/// A clone the git host turned away: the machine's git uses the GitHub login Boat gives every
-/// sandbox, the one of the Boat account.
-fn explain_clone_failure(e: anyhow::Error, machine: &str, _remote: &str) -> anyhow::Error {
+/// A clone the git host turned away. On GitHub the machine's git uses the login Boat gives every
+/// sandbox, the Boat account's; any other host needs a read token set up on the machine.
+fn explain_clone_failure(e: anyhow::Error, machine: &str, remote: &str) -> anyhow::Error {
     let text = format!("{e:#}");
     let auth = ["Authentication failed", "could not read Username", "Permission denied", "Repository not found", "terminal prompts disabled"]
         .iter()
         .any(|s| text.contains(s));
-    if auth {
-        anyhow::anyhow!("{text}\n{machine} uses the GitHub login of your Boat account, which has no access to this repo.")
-    } else {
-        e
+    if !auth {
+        return e;
     }
+    match git_host(remote) {
+        Some(host) if host != "github.com" => anyhow::anyhow!(
+            "{text}\n{machine} has no access to {host}: give it a read token for {host} (a git credential helper, from the Boat environment)."
+        ),
+        _ => anyhow::anyhow!("{text}\n{machine} uses the GitHub login of your Boat account, which has no access to this repo."),
+    }
+}
+
+/// The host of a git remote: `https://host/...`, `ssh://user@host:port/...` or `user@host:path`.
+fn git_host(remote: &str) -> Option<String> {
+    let remote = remote.trim();
+    if let Ok(url) = url::Url::parse(remote) {
+        if let Some(host) = url.host_str() {
+            return Some(host.to_owned());
+        }
+    }
+    let (user_host, _) = remote.split_once(':')?;
+    let host = user_host.rsplit('@').next()?;
+    (!host.is_empty() && !host.contains('/')).then(|| host.to_owned())
 }
 
 /// A random v4 UUID, the form of T3's project ids.

@@ -7,8 +7,18 @@
 //! No authentication: it is meant for a tailnet address. Requests must name an allowed host, and a
 //! cross-site page cannot post to it: a POST whose `Origin` is not an allowed host is refused.
 
-use axum::Router;
+use axum::body::Bytes;
+use axum::extract::{Path, Request, State};
+use axum::http::header::{CONTENT_TYPE, HOST, ORIGIN};
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use futures_util::stream::{self, Stream, StreamExt};
 use serde_json::Value;
+use std::convert::Infallible;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,9 +39,142 @@ pub struct WebConfig {
     pub dist: Option<PathBuf>,
 }
 
+struct Shared<C> {
+    commands: Arc<C>,
+    changed: broadcast::Sender<()>,
+    dist: Option<PathBuf>,
+}
+
 /// `changed` fires whenever the state may have changed.
-pub fn router<C: Commands>(_commands: Arc<C>, _changed: broadcast::Sender<()>, _config: WebConfig) -> Router {
+pub fn router<C: Commands>(commands: Arc<C>, changed: broadcast::Sender<()>, config: WebConfig) -> Router {
+    let shared = Arc::new(Shared { commands, changed, dist: config.dist });
+    let hosts: Arc<Vec<String>> = Arc::new(config.allowed_hosts.iter().map(|h| h.to_ascii_lowercase()).collect());
     Router::new()
+        .route("/api/events", get(events::<C>))
+        .route("/api/{command}", post(command::<C>))
+        .fallback(ui::<C>)
+        .with_state(shared)
+        .layer(middleware::from_fn(move |req: Request, next: Next| {
+            let hosts = hosts.clone();
+            async move { guard(&hosts, req, next).await }
+        }))
+}
+
+/// `host`, or `host:port`, names one of the allowed hosts.
+fn allowed(hosts: &[String], value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    let bare = match value.rsplit_once(':') {
+        Some((h, port)) if !h.ends_with(']') || h.starts_with('[') => {
+            if port.chars().all(|c| c.is_ascii_digit()) { h.to_owned() } else { value.clone() }
+        }
+        _ => value.clone(),
+    };
+    hosts.iter().any(|h| *h == value || *h == bare)
+}
+
+/// Refuses requests for another host (DNS rebinding) and posts from another site.
+async fn guard(hosts: &[String], req: Request, next: Next) -> Response {
+    let headers = req.headers();
+    let host = headers.get(HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
+    if !allowed(hosts, host) {
+        return (StatusCode::FORBIDDEN, "unknown host").into_response();
+    }
+    if req.method() != Method::GET && req.method() != Method::HEAD {
+        if let Some(origin) = headers.get(ORIGIN) {
+            let origin_host = origin.to_str().ok().and_then(|o| url::Url::parse(o).ok()).and_then(|u| {
+                let host = u.host_str()?.to_owned();
+                Some(match u.port() {
+                    Some(p) => format!("{host}:{p}"),
+                    None => host,
+                })
+            });
+            if !origin_host.is_some_and(|o| allowed(hosts, &o)) {
+                return (StatusCode::FORBIDDEN, "cross-site request").into_response();
+            }
+        }
+    }
+    next.run(req).await
+}
+
+async fn command<C: Commands>(
+    State(shared): State<Arc<Shared<C>>>,
+    Path(command): Path<String>,
+    body: Bytes,
+) -> Response {
+    let args = if body.iter().all(u8::is_ascii_whitespace) {
+        Value::Null
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::BAD_REQUEST, Json(Value::String(format!("arguments are not JSON: {e}")))).into_response(),
+        }
+    };
+    match shared.commands.clone().call(command, args).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(Value::String(e))).into_response(),
+    }
+}
+
+/// The state now, then again on every change; changes that pile up while the client reads send
+/// one state, not each.
+async fn events<C: Commands>(State(shared): State<Arc<Shared<C>>>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = shared.changed.subscribe();
+    let first = state_event(&*shared.commands);
+    let commands = shared.commands.clone();
+    let rest = stream::unfold((rx, commands), |(mut rx, commands)| async move {
+        loop {
+            match rx.recv().await {
+                Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                    while rx.try_recv().is_ok() {}
+                    let ev = state_event(&*commands);
+                    return Some((ev, (rx, commands)));
+                }
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Sse::new(stream::once(async move { first }).chain(rest)).keep_alive(KeepAlive::default())
+}
+
+fn state_event<C: Commands>(commands: &C) -> Result<Event, Infallible> {
+    Ok(Event::default().event("state").data(commands.state().to_string()))
+}
+
+/// The built UI: the file asked for, else `index.html` so the UI's own paths load it. API paths
+/// no route took are not found, not the UI.
+async fn ui<C: Commands>(State(shared): State<Arc<Shared<C>>>, req: Request) -> Response {
+    let Some(dist) = &shared.dist else { return StatusCode::NOT_FOUND.into_response() };
+    if req.uri().path().starts_with("/api/") || req.method() != Method::GET && req.method() != Method::HEAD {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let rel = req.uri().path().trim_start_matches('/');
+    let safe = !rel.split('/').any(|seg| seg == ".." || seg.starts_with('.'));
+    let file = if safe && !rel.is_empty() { dist.join(rel) } else { dist.join("index.html") };
+    let file = if file.is_file() { file } else { dist.join("index.html") };
+    match tokio::fs::read(&file).await {
+        Ok(bytes) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, content_type(&file).parse().unwrap());
+            (headers, bytes).into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn content_type(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or_default() {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "mp4" => "video/mp4",
+        _ => "application/octet-stream",
+    }
 }
 
 #[cfg(test)]

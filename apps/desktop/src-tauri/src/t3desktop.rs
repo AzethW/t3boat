@@ -43,11 +43,12 @@ pub struct T3Desktop {
     token: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
-/// The `t3` CLI: the launcher T3 Code's desktop app writes into `~/.t3/bin`.
-fn locate_cli(home: &std::path::Path, _path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
-    let bin = home.join(".t3").join("bin");
+/// The `t3` CLI: the launcher T3 Code's desktop app writes into `~/.t3/bin`, else a `t3` on
+/// `path` (a headless T3 server installed by a package manager, as on NixOS).
+fn locate_cli(home: &std::path::Path, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let candidates: &[&str] = if cfg!(windows) { &["t3.cmd", "t3.exe"] } else { &["t3"] };
-    candidates.iter().map(|name| bin.join(name)).find(|p| p.is_file())
+    let dirs = std::iter::once(home.join(".t3").join("bin")).chain(path.map(std::env::split_paths).into_iter().flatten());
+    dirs.flat_map(|dir| candidates.iter().map(move |name| dir.join(name))).find(|p| p.is_file())
 }
 
 #[cfg(all(test, unix))]

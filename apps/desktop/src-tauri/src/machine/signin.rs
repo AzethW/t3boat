@@ -127,13 +127,53 @@ fn callback_port(url: &str) -> Option<u16> {
 
 /// Claude's login with no local callback: the URL it prints for when no browser opened, whose
 /// page shows a code to paste back into the login.
-pub fn claude_manual_url(_log: &str) -> Option<String> {
-    None
+pub fn claude_manual_url(log: &str) -> Option<String> {
+    let after = &log[log.find("visit:")? + "visit:".len()..];
+    // The URL comes inside an OSC 8 hyperlink (`ESC ] 8 ; ; URL BEL|ESC\ text ESC ] 8 ; ; ...`),
+    // or bare: either way the first https run, cut at any control character.
+    let start = after.find("https://")?;
+    let url: String = after[start..].chars().take_while(|c| !c.is_control() && !c.is_whitespace()).collect();
+    url.contains("redirect_uri=").then_some(url)
 }
 
 /// Codex's `--device-auth` login: the page to open and the one-time code to enter there.
-pub fn codex_device(_log: &str) -> Option<(String, String)> {
-    None
+pub fn codex_device(log: &str) -> Option<(String, String)> {
+    let plain = strip_ansi(log);
+    let url = plain
+        .split_whitespace()
+        .find(|w| w.starts_with("https://") && w.contains("/device"))?
+        .to_owned();
+    let after = &plain[plain.find("one-time code")?..];
+    let code = after.split_whitespace().find(|w| is_device_code(w))?.to_owned();
+    Some((url, code))
+}
+
+/// `Q7VA-LK422`: letters and digits, a dash between two groups.
+fn is_device_code(w: &str) -> bool {
+    let Some((a, b)) = w.split_once('-') else { return false };
+    let part = |p: &str, n: std::ops::RangeInclusive<usize>| {
+        n.contains(&p.len()) && p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    };
+    part(a, 4..=5) && part(b, 4..=6)
+}
+
+/// Drops ANSI CSI sequences (`ESC [ ... letter`), which colour the CLIs' output.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

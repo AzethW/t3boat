@@ -95,6 +95,71 @@ mod stop_login_tests {
     }
 }
 
+/// The scripts that start a manual sign-in on the machine, run one `boat exec` each, in order.
+/// The FIFO is the login's stdin: a holder keeps it open, so the login waits for a code instead
+/// of reading end-of-file, and `submit_sign_in_code` writes the code into it.
+pub fn manual_start_scripts(agent: Agent) -> [String; 2] {
+    let dir = manual_dir(agent);
+    [
+        format!(
+            "{stop} 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
+             (nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
+             (BROWSER=false nohup script -qfec '{login}' {dir}/log < {dir}/in >/dev/null 2>&1 &) && echo started",
+            login = agent.manual_login(),
+            stop = stop_login(agent.manual_login()),
+            hold = LOGIN_TIMEOUT.as_secs(),
+        ),
+        String::new(),
+    ]
+}
+
+#[cfg(all(test, unix))]
+mod manual_start_tests {
+    use super::{manual_start_scripts, Agent};
+    use std::process::{Command, Stdio};
+
+    /// What ends an earlier login must not end itself: `boat exec` runs each script as
+    /// `bash -lc "<script>"`, and the login's own words in that script match the kill pattern.
+    #[test]
+    fn the_script_that_ends_an_earlier_login_survives_it() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            let home = std::env::temp_dir().join(format!("t3boat-signin-{}", rand::random::<u64>()));
+            std::fs::create_dir_all(&home).unwrap();
+            let [reset, _] = manual_start_scripts(agent);
+            // The step that ends the earlier login, alone: what would it kill besides that login?
+            let reset = reset.split(" 2>/dev/null;").next().unwrap().to_owned();
+            let mut decoy = Command::new("bash")
+                .args(["-c", &format!("exec -a '{}' sleep 60", agent.manual_login())])
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let full = manual_start_scripts(agent).join("\n");
+            let script = format!("{reset} 2>/dev/null; echo survived # {}", full.replace('\n', " "));
+            let out = Command::new("bash").args(["-c", &script]).env("HOME", &home).output().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let ended = decoy.try_wait().unwrap().is_some();
+            let _ = decoy.kill();
+            let _ = std::fs::remove_dir_all(&home);
+            assert!(ended, "{agent:?}: the earlier login is still running");
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "survived", "{agent:?}: {:?}", out.status);
+        }
+    }
+
+    /// The script that ends earlier logins runs by itself, apart from the one that starts the
+    /// new login: nothing in it may hold the login's words unbracketed.
+    #[test]
+    fn ending_and_starting_are_separate_scripts() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            let [reset, launch] = manual_start_scripts(agent);
+            assert!(reset.contains("pkill"), "{agent:?}: {reset}");
+            assert!(!reset.contains(agent.manual_login()), "{agent:?}: the reset script names the login: {reset}");
+            assert!(launch.contains(agent.manual_login()), "{agent:?}: {launch}");
+            assert!(!launch.contains("pkill"), "{agent:?}: {launch}");
+        }
+    }
+}
+
 /// Where a manual sign-in keeps its log and stdin on the machine; one per agent.
 fn manual_dir(agent: Agent) -> &'static str {
     match agent {
@@ -168,21 +233,11 @@ impl MachineRuntime {
         let id = self.sandbox_id();
         let boat = self.boat();
         let dir = manual_dir(agent);
-        // The FIFO is the login's stdin: a holder keeps it open, so the login waits for a code
-        // instead of reading end-of-file, and `submit_sign_in_code` writes the code into it.
-        boat.exec_ok(
-            &id,
-            &format!(
-                "{stop} 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
-                 (nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
-                 (BROWSER=false nohup script -qfec '{login}' {dir}/log < {dir}/in >/dev/null 2>&1 &) && echo started",
-                login = agent.manual_login(),
-                stop = stop_login(agent.manual_login()),
-                hold = LOGIN_TIMEOUT.as_secs(),
-            ),
-            30,
-        )
-        .await?;
+        for script in manual_start_scripts(agent) {
+            if !script.is_empty() {
+                boat.exec_ok(&id, &script, 30).await?;
+            }
+        }
         let started = Instant::now();
         let sign_in = loop {
             let log = boat.exec(&id, &format!("cat {dir}/log 2>/dev/null"), 30).await?.stdout;

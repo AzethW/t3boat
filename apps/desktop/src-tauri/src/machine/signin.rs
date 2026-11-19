@@ -99,50 +99,56 @@ mod stop_login_tests {
 /// The FIFO is the login's stdin: a holder keeps it open, so the login waits for a code instead
 /// of reading end-of-file, and `submit_sign_in_code` writes the code into it.
 pub fn manual_start_scripts(agent: Agent) -> [String; 2] {
-    let dir = manual_dir(agent);
+    start_scripts(agent.manual_login(), manual_dir(agent))
+}
+
+fn start_scripts(login: &str, dir: &str) -> [String; 2] {
     [
+        // Ends an earlier login and readies its directory; it never names the login unbracketed,
+        // or its own `bash -lc` would match the kill pattern.
         format!(
-            "{stop} 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
-             (nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
+            "{stop} 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && echo ready",
+            stop = stop_login(login),
+        ),
+        format!(
+            "(nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
              (BROWSER=false nohup script -qfec '{login}' {dir}/log < {dir}/in >/dev/null 2>&1 &) && echo started",
-            login = agent.manual_login(),
-            stop = stop_login(agent.manual_login()),
             hold = LOGIN_TIMEOUT.as_secs(),
         ),
-        String::new(),
     ]
 }
 
 #[cfg(all(test, unix))]
 mod manual_start_tests {
-    use super::{manual_start_scripts, Agent};
+    use super::{manual_start_scripts, start_scripts, Agent};
     use std::process::{Command, Stdio};
 
     /// What ends an earlier login must not end itself: `boat exec` runs each script as
     /// `bash -lc "<script>"`, and the login's own words in that script match the kill pattern.
+    /// Runs real `pkill`, so it uses a made-up login: one named like a vendor's would end
+    /// whatever login of that vendor the test machine has running.
     #[test]
     fn the_script_that_ends_an_earlier_login_survives_it() {
-        for agent in [Agent::Claude, Agent::Codex] {
+        for login in ["t3boat-test-claude auth login", "t3boat-test-codex login --device-auth"] {
             let home = std::env::temp_dir().join(format!("t3boat-signin-{}", rand::random::<u64>()));
             std::fs::create_dir_all(&home).unwrap();
-            let [reset, _] = manual_start_scripts(agent);
-            // The step that ends the earlier login, alone: what would it kill besides that login?
-            let reset = reset.split(" 2>/dev/null;").next().unwrap().to_owned();
+            let dir = "$HOME/.t3boat/signin-test";
+            // The first script runs by itself, as its own `boat exec`.
+            let [reset, _] = start_scripts(login, dir);
             let mut decoy = Command::new("bash")
-                .args(["-c", &format!("exec -a '{}' sleep 60", agent.manual_login())])
+                .args(["-c", &format!("exec -a '{login}' sleep 60")])
                 .stdout(Stdio::null())
                 .spawn()
                 .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(200));
-            let full = manual_start_scripts(agent).join("\n");
-            let script = format!("{reset} 2>/dev/null; echo survived # {}", full.replace('\n', " "));
+            let script = format!("{reset}; echo survived");
             let out = Command::new("bash").args(["-c", &script]).env("HOME", &home).output().unwrap();
             std::thread::sleep(std::time::Duration::from_millis(300));
             let ended = decoy.try_wait().unwrap().is_some();
             let _ = decoy.kill();
             let _ = std::fs::remove_dir_all(&home);
-            assert!(ended, "{agent:?}: the earlier login is still running");
-            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "survived", "{agent:?}: {:?}", out.status);
+            assert!(ended, "{login}: the earlier login is still running");
+            assert!(String::from_utf8_lossy(&out.stdout).trim().ends_with("survived"), "{login}: {:?} {}", out.status, String::from_utf8_lossy(&out.stdout));
         }
     }
 

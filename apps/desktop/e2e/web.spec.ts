@@ -77,3 +77,34 @@ async function rawStatus(base: string, method: string, path: string, host: strin
     sock.on("error", reject);
   });
 }
+
+/** WCAG contrast of an element's text against its own background. */
+async function textContrast(page: import("@playwright/test").Page, selector: string): Promise<number> {
+  return page.locator(selector).evaluate((el) => {
+    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = ([r, g, b]: number[]) => {
+      const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const s = getComputedStyle(el);
+    const [a, b] = [lum(rgb(s.color)), lum(rgb(s.backgroundColor))].sort((x, y) => y - x);
+    return (a + 0.05) / (b + 0.05);
+  });
+}
+
+for (const scheme of ["dark", "light"] as const) {
+  test(`pairing names the server and reads in ${scheme} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await fetch(`${fx.base}/api/create_machine`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `pair-${scheme}`, size: "default" }),
+    });
+    await page.goto(fx.base);
+    await page.getByRole("button", { name: "Add to T3 Code" }).first().click();
+    const command = page.getByRole("dialog").locator(".copyable");
+    await command.waitFor();
+    await expect.soft(command).toHaveText(/^ssh -N -L (\d+):localhost:\1 e2e-server$/);
+    expect.soft(await textContrast(page, ".server-dialog .copyable"), "command text contrast").toBeGreaterThanOrEqual(4.5);
+  });
+}

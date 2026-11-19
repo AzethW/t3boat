@@ -71,6 +71,7 @@ export async function start(): Promise<Fixture> {
     T3BOAT_WEB_ALLOWED_HOSTS: "127.0.0.1",
     T3BOAT_WEB_DIST: path.join(desktop, "dist"),
     T3BOAT_MCP_ADDR: `127.0.0.1:${mcpPort}`,
+    T3BOAT_SSH_HOST: "e2e-server",
     RUST_LOG: "info,t3boat_lib=debug",
   };
   const machine = spawn(process.execPath, [path.join(here, "fakes/machine.mjs")], { env, stdio: "inherit" });

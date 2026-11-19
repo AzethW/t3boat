@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Fake `t3` CLI for the web E2E: a version to pin machines to, and environment links kept in
+# $FAKE_STATE/links.json. Logs every call to $FAKE_STATE/t3.log.
+echo "t3 $*" >>"$FAKE_STATE/t3.log"
+links="$FAKE_STATE/links.json"
+[ -f "$links" ] || echo '[]' >"$links"
+case "$1 ${2:-}" in
+  "--version ") echo "t3 v0.1.11-nightly.20261117.4838" ;;
+  "environment list") cat "$links" ;;
+  "environment link"|"environment unlink") ;;
+  *) echo "fake t3: unsupported $*" >&2; exit 2 ;;
+esac

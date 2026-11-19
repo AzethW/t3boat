@@ -29,3 +29,4 @@ dist-ssr
 .envrc
 .dev.vars
 .vercel
+apps/desktop/e2e-results/

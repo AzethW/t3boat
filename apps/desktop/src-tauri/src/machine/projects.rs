@@ -115,7 +115,7 @@ impl MachineRuntime {
             }),
         )
         .await
-        .map_err(|e| explain_clone_failure(e, &self.record().name))?;
+        .map_err(|e| explain_clone_failure(e, &self.record().name, &project.remote_url))?;
         // The server clones for the existing project when one already owns the destination.
         let project_id = started["projectId"].as_str().unwrap_or_default().to_owned();
         let cwd = started["cwd"].as_str().unwrap_or_default().to_owned();
@@ -136,7 +136,7 @@ impl MachineRuntime {
         .await?;
         match outcome {
             Some(Ok(())) => {}
-            Some(Err(e)) => return Err(explain_clone_failure(anyhow::anyhow!(e), &self.record().name)),
+            Some(Err(e)) => return Err(explain_clone_failure(anyhow::anyhow!(e), &self.record().name, &project.remote_url)),
             None => bail!("T3 Code stopped reporting the clone"),
         }
 
@@ -188,7 +188,7 @@ fn progress(clone: &Value) -> String {
 
 /// A clone the git host turned away: the machine's git uses the GitHub login Boat gives every
 /// sandbox, the one of the Boat account.
-fn explain_clone_failure(e: anyhow::Error, machine: &str) -> anyhow::Error {
+fn explain_clone_failure(e: anyhow::Error, machine: &str, _remote: &str) -> anyhow::Error {
     let text = format!("{e:#}");
     let auth = ["Authentication failed", "could not read Username", "Permission denied", "Repository not found", "terminal prompts disabled"]
         .iter()
@@ -227,6 +227,19 @@ mod tests {
         assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
         assert!(parts[2].starts_with('4'));
         assert!(matches!(parts[3].chars().next(), Some('8' | '9' | 'a' | 'b')));
+    }
+
+    #[test]
+    fn a_refused_clone_names_its_git_host() {
+        let refused = || anyhow::anyhow!("fatal: Authentication failed for 'https://bitbucket.org/jmb/x.git/'");
+        let bitbucket = explain_clone_failure(refused(), "dev", "git@bitbucket.org:jmb/x.git").to_string();
+        assert!(bitbucket.contains("bitbucket.org"), "{bitbucket}");
+        assert!(bitbucket.contains("read token"), "{bitbucket}");
+        assert!(!bitbucket.contains("GitHub"), "{bitbucket}");
+        let github = explain_clone_failure(refused(), "dev", "https://github.com/o/r.git").to_string();
+        assert!(github.contains("GitHub login of your Boat account"), "{github}");
+        let other = explain_clone_failure(anyhow::anyhow!("disk full"), "dev", "git@bitbucket.org:jmb/x.git").to_string();
+        assert_eq!(other, "disk full");
     }
 
     #[test]

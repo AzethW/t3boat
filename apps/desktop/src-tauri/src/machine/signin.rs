@@ -125,6 +125,47 @@ fn callback_port(url: &str) -> Option<u16> {
     redirect.port()
 }
 
+/// Claude's login with no local callback: the URL it prints for when no browser opened, whose
+/// page shows a code to paste back into the login.
+pub fn claude_manual_url(_log: &str) -> Option<String> {
+    None
+}
+
+/// Codex's `--device-auth` login: the page to open and the one-time code to enter there.
+pub fn codex_device(_log: &str) -> Option<(String, String)> {
+    None
+}
+
+#[cfg(test)]
+mod manual_tests {
+    use super::{claude_manual_url, codex_device};
+
+    /// As `script` records `claude auth login` 2.1.326 with no browser: the URL twice inside an
+    /// OSC 8 hyperlink, then the paste prompt.
+    const CLAUDE: &str = "Opening browser to sign in\u{2026}\r\nIf the browser didn't open, visit: \u{1b}]8;;https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc\u{7}https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc\u{1b}]8;;\u{7}\r\nPaste code here if prompted > ";
+
+    /// As `script` records `codex login --device-auth` 0.169.0.
+    const CODEX: &str = "Welcome to Codex [v0.169.0]\r\n\u{1b}[1mFollow these steps to sign in with ChatGPT using device code authorization:\u{1b}[0m\r\n1. Open this link in your browser and sign in to your account\r\n   \u{1b}[94mhttps://auth.openai.com/codex/device\u{1b}[0m\r\n2. Enter this one-time code \u{1b}[90m(expires in 15 minutes)\u{1b}[0m\r\n   \u{1b}[94mQ7VA-LK422\u{1b}[0m\r\n";
+
+    #[test]
+    fn finds_claudes_paste_code_url() {
+        let url = claude_manual_url(CLAUDE).unwrap();
+        assert!(url.starts_with("https://claude.com/cai/oauth/authorize?"), "{url}");
+        assert!(url.ends_with("state=abc"), "{url}");
+        assert!(url.contains("redirect_uri=https%3A%2F%2Fplatform.claude.com"), "{url}");
+        assert_eq!(claude_manual_url("Opening browser to sign in\u{2026}\r\n"), None);
+    }
+
+    #[test]
+    fn finds_codexs_device_page_and_code() {
+        assert_eq!(
+            codex_device(CODEX),
+            Some(("https://auth.openai.com/codex/device".to_owned(), "Q7VA-LK422".to_owned()))
+        );
+        assert_eq!(codex_device("Welcome to Codex [v0.169.0]\r\n"), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::callback_port;

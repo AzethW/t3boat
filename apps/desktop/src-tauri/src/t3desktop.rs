@@ -43,16 +43,52 @@ pub struct T3Desktop {
     token: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
+/// The `t3` CLI: the launcher T3 Code's desktop app writes into `~/.t3/bin`.
+fn locate_cli(home: &std::path::Path, _path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let bin = home.join(".t3").join("bin");
+    let candidates: &[&str] = if cfg!(windows) { &["t3.cmd", "t3.exe"] } else { &["t3"] };
+    candidates.iter().map(|name| bin.join(name)).find(|p| p.is_file())
+}
+
+#[cfg(all(test, unix))]
+mod locate_tests {
+    use super::locate_cli;
+    use std::path::Path;
+
+    fn dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("t3boat-locate-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn touch(p: &Path) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "#!/bin/sh\n").unwrap();
+    }
+
+    #[test]
+    fn the_desktop_launcher_wins() {
+        let (home, sys) = (dir(), dir());
+        touch(&home.join(".t3/bin/t3"));
+        touch(&sys.join("t3"));
+        assert_eq!(locate_cli(&home, Some(sys.as_os_str())), Some(home.join(".t3/bin/t3")));
+    }
+
+    #[test]
+    fn without_the_desktop_app_t3_on_path_is_used() {
+        let (home, empty, sys) = (dir(), dir(), dir());
+        touch(&sys.join("t3"));
+        let path = std::env::join_paths([&empty, &sys]).unwrap();
+        assert_eq!(locate_cli(&home, Some(&path)), Some(sys.join("t3")));
+        assert_eq!(locate_cli(&home, Some(empty.as_os_str())), None);
+        assert_eq!(locate_cli(&home, None), None);
+    }
+}
+
 impl T3Desktop {
     pub fn locate() -> Option<Self> {
-        let home = dirs::home_dir()?;
-        let bin = home.join(".t3").join("bin");
-        let candidates: &[&str] = if cfg!(windows) { &["t3.cmd", "t3.exe"] } else { &["t3"] };
-        candidates
-            .iter()
-            .map(|name| bin.join(name))
-            .find(|p| p.is_file())
-            .map(|cli| Self { cli, token_file: None, token: Arc::default() })
+        let cli = locate_cli(&dirs::home_dir()?, std::env::var_os("PATH").as_deref())?;
+        Some(Self { cli, token_file: None, token: Arc::default() })
     }
 
     pub fn with_token_file(mut self, path: PathBuf) -> Self {

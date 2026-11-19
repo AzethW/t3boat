@@ -54,8 +54,15 @@ impl Agent {
 }
 
 /// A shell command that ends any running `login` (a command line such as `claude auth login`).
+/// The script running it holds the same words, so a plain pattern would end the script too: the
+/// first letter goes in brackets, which matches the login but not this command's own text.
 pub fn stop_login(login: &str) -> String {
-    format!("pkill -f '{login}'")
+    let mut chars = login.chars();
+    let pattern = match chars.next() {
+        Some(first) => format!("[{first}]{}", chars.as_str()),
+        None => String::new(),
+    };
+    format!("pkill -f '{pattern}'")
 }
 
 #[cfg(all(test, unix))]
@@ -128,7 +135,7 @@ impl MachineRuntime {
         // The machine must not fall asleep while the person is in the browser.
         let result = self.kept_awake(self.finish_sign_in(agent, &dir)).await;
         let _ = boat
-            .exec(&id, &format!("rm -rf '{dir}'; pkill -f '{}'", agent.login()), 30)
+            .exec(&id, &format!("rm -rf '{dir}'; {}", stop_login(agent.login())), 30)
             .await;
         result?;
         self.refresh_providers().await;
@@ -166,10 +173,11 @@ impl MachineRuntime {
         boat.exec_ok(
             &id,
             &format!(
-                "pkill -f '{login}' 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
+                "{stop} 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
                  (nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
                  (BROWSER=false nohup script -qfec '{login}' {dir}/log < {dir}/in >/dev/null 2>&1 &) && echo started",
                 login = agent.manual_login(),
+                stop = stop_login(agent.manual_login()),
                 hold = LOGIN_TIMEOUT.as_secs(),
             ),
             30,
@@ -195,7 +203,7 @@ impl MachineRuntime {
             let done = this.kept_awake(this.wait_signed_in(agent)).await;
             let _ = this
                 .boat()
-                .exec(&this.sandbox_id(), &format!("pkill -f '{}'; rm -rf {dir}", agent.manual_login()), 30)
+                .exec(&this.sandbox_id(), &format!("{}; rm -rf {dir}", stop_login(agent.manual_login())), 30)
                 .await;
             match done {
                 Ok(()) => this.refresh_providers().await,

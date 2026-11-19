@@ -85,7 +85,10 @@ export async function start(): Promise<Fixture> {
     if (server.exitCode !== null) return;
     const exited = new Promise((r) => server.once("exit", r));
     server.kill("SIGTERM");
+    // As systemd would, though sooner: a server that ignores SIGTERM is killed, so a hang shows as a slow stop.
+    const killer = setTimeout(() => server.kill("SIGKILL"), 15_000);
     await exited;
+    clearTimeout(killer);
   };
   try {
     await launch();

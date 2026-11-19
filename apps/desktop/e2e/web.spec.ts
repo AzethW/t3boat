@@ -108,3 +108,12 @@ for (const scheme of ["dark", "light"] as const) {
     expect.soft(await textContrast(page, ".server-dialog .copyable"), "command text contrast").toBeGreaterThanOrEqual(4.5);
   });
 }
+
+test("the server stops promptly while a page holds its event stream open", async ({ page }) => {
+  await page.goto(fx.base);
+  await expect(page.getByText(/machines|No machines yet/).first()).toBeVisible();
+  // systemd allows 90 s before SIGKILL; a stop that waits on the open stream never ends by itself.
+  const started = Date.now();
+  await fx.restart();
+  expect(Date.now() - started, "restart time (ms)").toBeLessThan(10_000);
+});

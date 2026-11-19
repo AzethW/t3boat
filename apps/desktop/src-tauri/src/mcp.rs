@@ -41,9 +41,14 @@ pub fn url() -> String {
 }
 
 pub async fn serve(app: Arc<App>) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", MCP_PORT))
+    serve_on(app, std::net::SocketAddr::from(([127, 0, 0, 1], MCP_PORT))).await
+}
+
+/// `serve` on another loopback address: t3boat-server takes it from `T3BOAT_MCP_ADDR`.
+pub async fn serve_on(app: Arc<App>, addr: std::net::SocketAddr) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .with_context(|| format!("listening on port {MCP_PORT}"))?;
+        .with_context(|| format!("listening on {addr}"))?;
     axum::serve(listener, router(app)).await?;
     Ok(())
 }

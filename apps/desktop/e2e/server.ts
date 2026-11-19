@@ -99,6 +99,18 @@ export async function start(): Promise<Fixture> {
     stop: async () => {
       await halt();
       machine.kill("SIGTERM");
+      // Keep the logs with the report; drop the rest.
+      const keep = path.join(desktop, "e2e-results", "logs");
+      fs.mkdirSync(keep, { recursive: true });
+      for (const [from, to] of [
+        [path.join(state, "boat.log"), "boat.log"],
+        [path.join(state, "machine.log"), "machine.log"],
+        [path.join(state, "t3.log"), "t3.log"],
+        [path.join(root, "server.log"), "server.log"],
+      ]) {
+        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(keep, to));
+      }
+      fs.rmSync(root, { recursive: true, force: true });
     },
   };
 }

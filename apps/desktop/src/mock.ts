@@ -276,6 +276,11 @@ function create(): MockBackend {
       patch(id, { signedOut: find(id).signedOut.filter((a) => a !== agent) });
     },
 
+    // t3boat-server only; the mock signs in at once from sign_in_agent
+    async sign_in_code({ id, agent }) {
+      patch(id, { signedOut: find(id).signedOut.filter((a) => a !== agent) });
+    },
+
     async open_machine({ id }) {
       const m = find(id);
       if (!m.paired) {

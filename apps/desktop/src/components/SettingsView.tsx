@@ -34,6 +34,8 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
     setAdding(client);
     onAddMcp(client).finally(() => setAdding(null));
   };
+  // t3boat-server: no login to start at, no local coding agents to add, nothing to quit
+  const server = state.host === "server";
   const missing = CLIENTS.filter((c) => state.mcp[c.id] === null).map((c) => c.name);
 
   const change = (p: Partial<Settings>) => {
@@ -49,6 +51,7 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
         <p className="hint">
           Machines sleep 5 minutes after their agents finish and wake by themselves when you use them in T3 Code.
         </p>
+        {server ? null : (
         <label className="setting setting-row">
           <span className="setting-name">Start at login</span>
           <input
@@ -59,6 +62,8 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
             onChange={(e) => change({ startAtLogin: e.target.checked })}
           />
         </label>
+        )}
+        {server ? null : (
         <div className="setting">
           <span className="caption">mcp</span>
           <span className="setting-name">
@@ -105,6 +110,7 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
             )}
           </span>
         </div>
+        )}
         <BoatAccounts accounts={s.boatAccounts} onChange={(boatAccounts) => change({ boatAccounts })} />
       </div>
       <div className="view-foot settings-foot">
@@ -117,9 +123,11 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
           {email && plan && " · "}
           {plan}
         </span>
-        <button className="btn btn-sm btn-quiet" onClick={onQuit}>
-          Quit t3boat
-        </button>
+        {server ? null : (
+          <button className="btn btn-sm btn-quiet" onClick={onQuit}>
+            Quit t3boat
+          </button>
+        )}
       </div>
     </div>
   );

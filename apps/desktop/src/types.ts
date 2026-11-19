@@ -89,6 +89,26 @@ export interface UiState {
   sizes: Size[];
   /** null = that CLI isn't installed */
   mcp: Record<McpClient, boolean | null>;
+  /** "server": t3boat-server's web UI, whose browser is on another computer; absent in older shells */
+  host?: "desktop" | "server";
+}
+
+/** A fresh pairing: the t3code:// link, the localhost URL it carries, and the port it needs. */
+export interface Pairing {
+  link: string;
+  pairingUrl: string;
+  port: number;
+}
+
+/** Where "Open" goes, from t3boat-server: a T3 Code link, or a pairing for an unpaired machine. */
+export type T3Link = { kind: "open"; url: string } | ({ kind: "pair" } & Pairing);
+
+/** A sign-in with no local callback (t3boat-server): the page, and Codex's code to enter there. */
+export interface ManualSignIn {
+  url: string;
+  userCode: string | null;
+  /** the page gives a code to send back with sign_in_code (Claude) */
+  needsCode: boolean;
 }
 
 export interface MachineDetails {
@@ -113,12 +133,13 @@ export interface Commands {
   add_project: [{ id: string; projectId: string }, void]; // resolves once cloned
   wake_machine: [{ id: string }, void];
   sleep_machine: [{ id: string }, void];
-  open_machine: [{ id: string; thread?: string }, void];
-  pair_machine: [{ id: string }, void];
+  open_machine: [{ id: string; thread?: string }, void | T3Link]; // T3Link from t3boat-server
+  pair_machine: [{ id: string }, void | Pairing]; // Pairing from t3boat-server
   delete_machine: [{ id: string; discard?: boolean }, void];
   resize_machine: [{ id: string; size: string }, void];
   keep_awake: [{ id: string; minutes: number | null }, void]; // null: until stopped; 0: stop
-  sign_in_agent: [{ id: string; agent: string }, void];
+  sign_in_agent: [{ id: string; agent: string }, void | ManualSignIn]; // ManualSignIn from t3boat-server, which finishes in the background
+  sign_in_code: [{ id: string; agent: string; code: string }, void]; // t3boat-server only
   turn_on_connect: [{ id: string }, void]; // resolves once reachable, after the browser sign-in
   latest_thread: [{ id: string }, string | null]; // thread id
   get_machine_details: [{ id: string }, MachineDetails];

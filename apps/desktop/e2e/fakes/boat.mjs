@@ -9,8 +9,8 @@ const statePath = path.join(dir, "boat.json");
 const load = () => (fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")) : { next: 1, sandboxes: {} });
 const save = (s) => fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
 let args = process.argv.slice(2);
-fs.appendFileSync(path.join(dir, "boat.log"), args.join(" ").replace(/\n/g, "\\n").slice(0, 300) + "\n");
 if (args[0] === "--json") args = args.slice(1);
+fs.appendFileSync(path.join(dir, "boat.log"), args.join(" ").replace(/\n/g, "\\n").slice(0, 300) + "\n");
 const out = (v) => console.log(JSON.stringify(v));
 const fail = (msg) => {
   console.error(msg);

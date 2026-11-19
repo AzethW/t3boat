@@ -23,9 +23,39 @@ async function tauriBackend(): Promise<Backend> {
   };
 }
 
+/** t3boat-server's web API: commands as POST /api/<cmd>, state as server-sent events. */
+function httpBackend(): Backend {
+  return {
+    async call(cmd, args) {
+      const res = await fetch(`/api/${cmd}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args ?? null),
+      });
+      const body = await res.json().catch(() => `t3boat answered ${res.status}`);
+      if (!res.ok) throw typeof body === "string" ? body : `t3boat answered ${res.status}`;
+      return body;
+    },
+    subscribe(cb) {
+      const source = new EventSource("/api/events");
+      source.addEventListener("state", (e) => cb(JSON.parse((e as MessageEvent<string>).data) as UiState));
+      return () => source.close();
+    },
+  };
+}
+
+/** Served by t3boat-server: its API answers. Otherwise (vite dev on its own) the mock. */
+async function webBackend(): Promise<Backend> {
+  try {
+    const res = await fetch("/api/get_state", { method: "POST" });
+    if (res.ok && res.headers.get("content-type")?.includes("application/json")) return httpBackend();
+  } catch {}
+  return import("./mock").then((m) => m.mockBackend());
+}
+
 let backendPromise: Promise<Backend> | null = null;
 function backend(): Promise<Backend> {
-  backendPromise ??= inTauri ? tauriBackend() : import("./mock").then((m) => m.mockBackend());
+  backendPromise ??= inTauri ? tauriBackend() : webBackend();
   return backendPromise;
 }
 

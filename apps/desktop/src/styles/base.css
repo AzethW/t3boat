@@ -81,3 +81,33 @@ p {
   margin-right: 0.2em;
   vertical-align: -0.14em;
 }
+
+/* ── web: the tray panel on a page (t3boat-server) ───────────── */
+
+html.web body {
+  display: grid;
+  place-items: center;
+  background: var(--blue-50);
+}
+@media (prefers-color-scheme: dark) {
+  html.web body {
+    background: var(--navy-900);
+  }
+}
+html.web #root {
+  width: 380px;
+  height: min(720px, calc(100% - 32px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+}
+/* a phone is the panel's own width: edge to edge */
+@media (max-width: 420px) {
+  html.web #root {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+}

@@ -2,6 +2,8 @@
 //! machine and its localhost callback port is forwarded to this computer, so the browser's
 //! redirect after "Authorize" lands on the machine: no code to paste, and the credential is
 //! created on the machine and stays there. This computer's own logins are never touched.
+//! t3boat-server's browser is on another computer, so there the login runs with no callback
+//! instead (`start_manual_sign_in`).
 
 use super::MachineRuntime;
 use crate::proxy::upstream;
@@ -34,6 +36,14 @@ impl Agent {
         }
     }
 
+    /// The login with no local callback, for a browser on another computer.
+    fn manual_login(self) -> &'static str {
+        match self {
+            Self::Claude => "claude auth login",
+            Self::Codex => "codex login --device-auth",
+        }
+    }
+
     /// Exits 0 once signed in.
     fn status(self) -> &'static str {
         match self {
@@ -41,6 +51,24 @@ impl Agent {
             Self::Codex => "codex login status >/dev/null 2>&1",
         }
     }
+}
+
+/// Where a manual sign-in keeps its log and stdin on the machine; one per agent.
+fn manual_dir(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Claude => "$HOME/.t3boat/signin-claude",
+        Agent::Codex => "$HOME/.t3boat/signin-codex",
+    }
+}
+
+/// What the person needs for a manual sign-in: the page, and for Codex the code to enter there.
+/// `needs_code`: the page gives a code to send back with `sign_in_code`.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualSignIn {
+    pub url: String,
+    pub user_code: Option<String>,
+    pub needs_code: bool,
 }
 
 impl MachineRuntime {
@@ -68,8 +96,13 @@ impl MachineRuntime {
             .exec(&id, &format!("rm -rf '{dir}'; pkill -f '{}'", agent.login()), 30)
             .await;
         result?;
-        // T3 re-checks the provider and tells T3 Code; the sign-in nudge goes away with it, and
-        // the recorded config learns it too.
+        self.refresh_providers().await;
+        Ok(())
+    }
+
+    /// T3 re-checks the provider and tells T3 Code; the sign-in nudge goes away with it, and the
+    /// recorded config learns it too.
+    async fn refresh_providers(&self) {
         let refreshed = upstream::call(
             &self.upstream_url(),
             &self.upstream_token(),
@@ -81,7 +114,91 @@ impl MachineRuntime {
             self.cache.lock().unwrap().fold_providers(&result["providers"]);
             self.save_cache();
         }
-        Ok(())
+    }
+
+    /// The sign-in for t3boat-server, whose browser is on another computer: the login runs with
+    /// no local callback. Claude shows a page that gives a code to paste back
+    /// (`submit_sign_in_code`); Codex shows a one-time code to enter on its page and finds out by
+    /// itself. Answers as soon as the page is known; the login finishes in the background, with
+    /// the machine kept awake, and T3 is told when it does.
+    pub async fn start_manual_sign_in(self: &std::sync::Arc<Self>, agent: Agent) -> Result<ManualSignIn> {
+        self.ensure_awake().await?;
+        let id = self.sandbox_id();
+        let boat = self.boat();
+        let dir = manual_dir(agent);
+        // The FIFO is the login's stdin: a holder keeps it open, so the login waits for a code
+        // instead of reading end-of-file, and `submit_sign_in_code` writes the code into it.
+        boat.exec_ok(
+            &id,
+            &format!(
+                "pkill -f '{login}' 2>/dev/null; rm -rf {dir}; mkdir -p {dir} && mkfifo {dir}/in && \
+                 (nohup sleep {hold} > {dir}/in 2>/dev/null &) && \
+                 (BROWSER=false nohup script -qfec '{login}' {dir}/log < {dir}/in >/dev/null 2>&1 &) && echo started",
+                login = agent.manual_login(),
+                hold = LOGIN_TIMEOUT.as_secs(),
+            ),
+            30,
+        )
+        .await?;
+        let started = Instant::now();
+        let sign_in = loop {
+            let log = boat.exec(&id, &format!("cat {dir}/log 2>/dev/null"), 30).await?.stdout;
+            let found = match agent {
+                Agent::Claude => claude_manual_url(&log).map(|url| ManualSignIn { url, user_code: None, needs_code: true }),
+                Agent::Codex => codex_device(&log).map(|(url, code)| ManualSignIn { url, user_code: Some(code), needs_code: false }),
+            };
+            if let Some(found) = found {
+                break found;
+            }
+            if started.elapsed() > URL_TIMEOUT {
+                bail!("the {agent:?} login did not start on the machine");
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        };
+        let this = self.clone();
+        tokio::spawn(async move {
+            let done = this.kept_awake(this.wait_signed_in(agent)).await;
+            let _ = this
+                .boat()
+                .exec(&this.sandbox_id(), &format!("pkill -f '{}'; rm -rf {dir}", agent.manual_login()), 30)
+                .await;
+            match done {
+                Ok(()) => this.refresh_providers().await,
+                Err(e) => tracing::warn!("{agent:?} sign-in on {}: {e:#}", this.id()),
+            }
+        });
+        Ok(sign_in)
+    }
+
+    /// The code Claude's sign-in page gave, into the login `start_manual_sign_in` left waiting.
+    pub async fn submit_sign_in_code(&self, agent: Agent, code: &str) -> Result<()> {
+        let code = code.trim();
+        if code.is_empty() || code.len() > 512 || code.chars().any(|c| c.is_control()) {
+            bail!("that is not a sign-in code");
+        }
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("{code}\n"));
+        let dir = manual_dir(agent);
+        self.boat()
+            .exec_ok(
+                &self.sandbox_id(),
+                &format!("test -p {dir}/in || {{ echo 'no sign-in is waiting for a code' >&2; exit 1; }}; echo {b64} | base64 -d > {dir}/in"),
+                30,
+            )
+            .await
+            .map(drop)
+    }
+
+    async fn wait_signed_in(&self, agent: Agent) -> Result<()> {
+        let started = Instant::now();
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if self.boat().exec(&self.sandbox_id(), agent.status(), 30).await?.exit_code == Some(0) {
+                return Ok(());
+            }
+            if started.elapsed() > LOGIN_TIMEOUT {
+                bail!("the {agent:?} sign-in was not finished in the browser");
+            }
+        }
     }
 
     async fn finish_sign_in(&self, agent: Agent, dir: &str) -> Result<()> {

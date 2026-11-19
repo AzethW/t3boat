@@ -10,14 +10,28 @@ default-run = "t3boat"
 name = "t3boat_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["desktop"]
+# The tray app (Tauri). Without it: the headless t3boat-server and its web UI, no webkit.
+desktop = ["dep:tauri", "dep:tauri-plugin-autostart", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-notification", "dep:tauri-build", "dep:gtk", "dep:gdkx11"]
+
+[[bin]]
+name = "t3boat"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "t3boat-server"
+path = "src/bin/t3boat-server.rs"
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-autostart = "2"
-tauri-plugin-single-instance = "2"
-tauri-plugin-notification = "2"
+tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -39,8 +53,8 @@ bytes = "1"
 sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gdkx11 = "0.18"
-gtk = "0.18"
+gdkx11 = { version = "0.18", optional = true }
+gtk = { version = "0.18", optional = true }
 
 [profile.release]
 codegen-units = 1

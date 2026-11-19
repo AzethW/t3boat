@@ -19,6 +19,53 @@ const FIRST_PORT: u16 = 47731;
 /// Machines ever created here: deleted ones keep their port.
 const PORTS: u16 = 1000;
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pairing {
+    pub link: String,
+    pub pairing_url: String,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum T3Link {
+    Open { url: String },
+    Pair(Pairing),
+}
+
+/// Everything the UI shows, as its `state` event carries it (tray app and web server alike).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiState {
+    pub setup: Setup,
+    pub setup_busy: bool,
+    pub sign_in_code: Option<String>,
+    pub account: Option<Account>,
+    pub machines: Vec<MachineView>,
+    pub costs: Costs,
+    pub settings: Settings,
+    pub sizes: &'static [provision::SizeInfo],
+    pub mcp: McpStatus,
+    /// Which shell runs the UI: `"desktop"` (the tray app) or `"server"` (t3boat-server's web UI).
+    pub host: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub identifier: Option<String>,
+    pub plan: Option<String>,
+}
+
+/// Whether each coding agent CLI has t3boat's MCP server; `None`: that CLI is not installed.
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub claude_code: Option<bool>,
+    pub codex: Option<bool>,
+}
+
 /// Why the app cannot run yet, in the order the user has to fix it.
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -456,9 +503,31 @@ impl App {
 
     /// Opens T3 Code's own "add backend" confirmation for this machine.
     pub fn pair(&self, machine: &MachineRuntime) -> Result<()> {
+        open_url(&self.pairing(machine).link)
+    }
+
+    /// A fresh pairing for this machine: its `localhost` URL on this computer, and the
+    /// `t3code://` link that asks T3 Code to add it. For t3boat-server the browser opens the link
+    /// on another computer, which reaches the port through an SSH forward.
+    pub fn pairing(&self, machine: &MachineRuntime) -> Pairing {
         let code = machine.auth.new_pairing_code();
-        let pairing_url = format!("http://localhost:{}/pair#token={code}", machine.record().local_port);
-        open_url(&format!("t3code://pair?pairingUrl={}", urlencoding::encode(&pairing_url)))
+        let port = machine.record().local_port;
+        let pairing_url = format!("http://localhost:{port}/pair#token={code}");
+        let link = format!("t3code://pair?pairingUrl={}", urlencoding::encode(&pairing_url));
+        Pairing { link, pairing_url, port }
+    }
+
+    /// Where "Open" goes in T3 Code: the thread, or the app, or the pairing for an unpaired
+    /// machine. `None`: only the desktop app itself, which has no link.
+    pub fn t3_link(&self, machine: &MachineRuntime, thread: Option<&str>) -> T3Link {
+        let record = machine.record();
+        if record.client_tokens.is_empty() {
+            return T3Link::Pair(self.pairing(machine));
+        }
+        match thread {
+            Some(thread) => T3Link::Open { url: format!("t3code://threads/{}/{thread}", record.environment_id) },
+            None => T3Link::Open { url: "t3code://".to_owned() },
+        }
     }
 
     /// Refuses while work runs on the machine, unless `discard`. T3 Code offers no way to remove
@@ -800,11 +869,17 @@ fn human_secs(s: u64) -> String {
 
 /// On Linux through GLib, as `gio open` does: `xdg-open` outside GNOME and KDE takes a scheme
 /// with a digit in it, like `t3code:`, for a file name.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "desktop"))]
 pub fn open_url(url: &str) -> Result<()> {
     use gtk::gio;
     gio::AppInfo::launch_default_for_uri(url, None::<&gio::AppLaunchContext>)
         .map_err(|e| anyhow::anyhow!("could not open {url}: {e}"))
+}
+
+/// t3boat-server has no browser of its own: whoever needs the page opens it from the web UI.
+#[cfg(all(target_os = "linux", not(feature = "desktop")))]
+pub fn open_url(url: &str) -> Result<()> {
+    bail!("this server has no browser; open {url} on your own computer")
 }
 
 #[cfg(not(target_os = "linux"))]

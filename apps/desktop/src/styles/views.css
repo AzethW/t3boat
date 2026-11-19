@@ -142,3 +142,77 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── server dialog: steps the web UI's person finishes themselves ── */
+
+.server-dialog {
+  width: min(340px, calc(100% - 32px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  overscroll-behavior: contain;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.server-dialog::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+.server-dialog-title {
+  font: 600 0.9375rem/1.25 var(--font-body);
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+.server-dialog-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 16px;
+}
+.server-dialog-steps li {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  max-width: 65ch;
+}
+.server-dialog-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+.server-dialog-row .btn {
+  flex-shrink: 0;
+}
+.server-dialog-form {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+}
+.server-dialog-form label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.server-dialog-form input {
+  flex: 1;
+  min-width: 0;
+}
+.copyable {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--tag-bg);
+  border: 1px solid var(--line);
+  font: 0.75rem/1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+  user-select: all;
+  -webkit-user-select: all;
+}
+.server-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}

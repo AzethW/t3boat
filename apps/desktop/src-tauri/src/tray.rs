@@ -1,13 +1,12 @@
 //! The tray app: tray icon, the popover window, and the commands the UI calls.
 //! Contract with the UI: docs/ui-contract.md.
 
-use crate::app::{self, App, Costs, MachineState, MachineView, Setup};
+use crate::app::{self, Account, App, MachineState, McpStatus, Setup, UiState};
 use crate::boat::Boat;
-use crate::machine::provision::{SizeInfo, SIZES};
+use crate::machine::provision::SIZES;
 use crate::machine::Event;
 use crate::mcp;
 use crate::store::Settings;
-use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -70,14 +69,6 @@ fn tray_clicked(handle: &AppHandle, anchor: Anchor) {
     toggle_panel(handle, Some(anchor));
 }
 
-/// Whether each coding agent CLI has t3boat's MCP server; `None`: that CLI is not installed.
-#[derive(Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct McpStatus {
-    claude_code: Option<bool>,
-    codex: Option<bool>,
-}
-
 async fn mcp_status() -> McpStatus {
     let status = |client| async move {
         if mcp::installed(client).await { Some(mcp::registered(client).await) } else { None }
@@ -100,28 +91,6 @@ struct SetupState {
     sign_in_code: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Account {
-    identifier: Option<String>,
-    plan: Option<String>,
-}
-
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UiState {
-    setup: Setup,
-    setup_busy: bool,
-    sign_in_code: Option<String>,
-    account: Option<Account>,
-    machines: Vec<MachineView>,
-    costs: Costs,
-    settings: Settings,
-    sizes: &'static [SizeInfo],
-    mcp: McpStatus,
-}
-
 impl Ui {
     fn app(&self) -> Result<Arc<App>, String> {
         self.app.lock().unwrap().clone().ok_or_else(|| "t3boat is not set up yet".to_owned())
@@ -140,6 +109,7 @@ impl Ui {
             settings: app.as_ref().map(|a| a.settings()).unwrap_or_default(),
             sizes: SIZES,
             mcp: self.mcp.lock().unwrap().clone(),
+            host: "desktop",
         }
     }
 }

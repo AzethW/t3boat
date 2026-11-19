@@ -10,6 +10,7 @@ import { MachineDetails } from "./components/MachineDetails";
 import { SetupView } from "./components/SetupView";
 import { Costs } from "./components/Costs";
 import { Icon } from "./components/Icons";
+import { ServerDialog, type ServerTask } from "./components/ServerDialog";
 
 /** "machine:<id>" = that machine's details */
 type View = "list" | "new" | "settings" | `machine:${string}`;
@@ -97,6 +98,7 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
   const [draftName, setDraftName] = useState("");
   const [pending, setPending] = useState<Record<string, string>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const [task, setTask] = useState<ServerTask | null>(null); // t3boat-server: a step for this browser
   const back = useCallback(() => setView("list"), []);
   const detailsError = useCallback((text: string) => toast(`Couldn't load details: ${text}`), [toast]);
 
@@ -160,10 +162,12 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
             setDeleteErrors((d) => ({ ...d, [key]: errorText(e) }));
           }
           return;
-        case "sign_in_agent":
-          await call("sign_in_agent", { id: m.id, agent: a.agent });
-          toast(`${a.agent} is signed in on ${m.name}`, "info");
+        case "sign_in_agent": {
+          const manual = await call("sign_in_agent", { id: m.id, agent: a.agent });
+          if (manual) setTask({ kind: "signIn", machine: m.name, machineId: m.id, agent: a.agent, ...manual });
+          else toast(`${a.agent} is signed in on ${m.name}`, "info");
           return;
+        }
         case "turn_on_connect":
           await call("turn_on_connect", { id: m.id });
           toast(`${m.name} is reachable from your other devices`, "info");
@@ -174,13 +178,25 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
         case "resize_machine":
           await call("resize_machine", { id: m.id, size: a.size });
           return;
-        case "open_machine":
-          await call("open_machine", { id: m.id, thread: a.thread });
-          if (!m.paired) acceptHint();
+        case "open_machine": {
+          const link = await call("open_machine", { id: m.id, thread: a.thread });
+          if (!link) {
+            if (!m.paired) acceptHint();
+          } else if (link.kind === "open") {
+            window.location.href = link.url;
+          } else {
+            setTask({ ...link, kind: "pair", machine: m.name });
+          }
           return;
+        }
+        case "pair_machine": {
+          const pairing = await call("pair_machine", { id: m.id });
+          if (pairing) setTask({ kind: "pair", machine: m.name, ...pairing });
+          else acceptHint();
+          return;
+        }
         default:
           await call(a.cmd, { id: m.id });
-          if (a.cmd === "pair_machine") acceptHint();
       }
     });
 
@@ -276,6 +292,16 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
       )}
 
       {selected ? null : <Costs costs={state.costs} />}
+      {task ? (
+        <ServerDialog
+          task={task}
+          onClose={() => setTask(null)}
+          onDone={(text) => {
+            setTask(null);
+            toast(text, "info");
+          }}
+        />
+      ) : null}
     </>
   );
 }

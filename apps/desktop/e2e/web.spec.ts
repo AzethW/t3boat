@@ -27,16 +27,21 @@ test("create, sleep, wake and delete a machine", async ({ page }) => {
 
   const row = page.getByRole("button", { name: "Details for alpha" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect.poll(() => fx.boatLog()).toMatch(/^new --name t3boat-alpha/m);
+  await expect.poll(() => fx.boatLog()).toMatch(/^new --name t3boat · alpha /m);
 
-  await expect(page.getByRole("button", { name: "Sleep now" })).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "Sleep now" }).click();
+  const menu = (item: string) => async () => {
+    await page.getByRole("button", { name: "More for alpha" }).click();
+    await page.getByRole("menuitem", { name: item }).click();
+  };
+  // Sleep and wake are in the row's menu: an unpaired machine's button is "Add to T3 Code".
+  await expect(page.getByText(/Idle/)).toBeVisible({ timeout: 30_000 });
+  await menu("Sleep now")();
   await expect.poll(() => fx.machineLog(), { timeout: 15_000 }).toMatch(/watchdog POST \/drain/);
-  await expect(page.getByRole("button", { name: "Wake now" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Asleep/)).toBeVisible({ timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Wake now" }).click();
+  await menu("Wake now")();
   await expect.poll(() => fx.boatLog(), { timeout: 15_000 }).toMatch(/^resume bx_e2e1 /m);
-  await expect(page.getByRole("button", { name: "Sleep now" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Idle/)).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { name: "More for alpha" }).click();
   await page.getByRole("menuitem", { name: "Delete machine…" }).click();

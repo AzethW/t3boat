@@ -216,3 +216,6 @@
   justify-content: flex-end;
   margin-top: 16px;
 }
+.server-dialog a.btn {
+  text-decoration: none;
+}

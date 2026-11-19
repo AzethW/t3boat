@@ -58,7 +58,47 @@ Please build and install t3boat (https://github.com/paukraft/t3boat) on my compu
 
 To let Claude Code or Codex on your computer manage machines, click "Add" next to them in t3boat's settings.
 
+## Headless server
+
+`t3boat-server` is t3boat without the menu bar app, for a computer that is always on: a home or office server running T3 Code's headless server. Machines keep waking on schedule with your laptop closed, and the UI is a web page.
+
+```sh
+nix build github:AzethW/t3boat/jmb/headless-web#t3boat-server   # binary plus the built UI
+```
+
+Without Nix: `bun install`, `bun run --cwd apps/desktop build`, then `cargo build --release --no-default-features --bin t3boat-server` in `apps/desktop/src-tauri`, and point `T3BOAT_WEB_DIST` at `apps/desktop/dist`.
+
+The server needs the Boat CLI signed in (`boat login`) and `t3` on `PATH` or in `~/.t3/bin`. It is configured from the environment:
+
+| Variable | Default | |
+|---|---|---|
+| `T3BOAT_WEB_ADDR` | `127.0.0.1:47740` | where the web UI listens |
+| `T3BOAT_WEB_ALLOWED_HOSTS` | the address's host | `Host` values it answers to, comma separated; anything else gets 403 |
+| `T3BOAT_WEB_DIST` | `share/t3boat/web` beside the binary | the built UI |
+| `T3BOAT_DATA_DIR` | `~/.local/share/t3boat` | machines, settings and spend |
+| `T3BOAT_MCP_ADDR` | `127.0.0.1:47730` | the MCP server for coding agents on the server |
+
+The web UI has no login. Bind it to a private address, such as a tailnet one, and list the names you reach it by in `T3BOAT_WEB_ALLOWED_HOSTS`. POSTs from another site's page are refused.
+
+What differs from the menu bar app:
+- **Adding a machine to T3 Code** on another computer needs its proxy port: the UI shows the `ssh -L` forward to run there, then the `t3code://` link.
+- **Signing an agent in** happens on the vendor's page in your browser: Claude's page gives a code to paste back into t3boat; Codex shows a one-time code to enter on its page.
+- **T3 Connect's sign-in** opens a browser on the computer t3boat runs on, so turn it on from the menu bar app.
+
 ## Development
+
+```sh
+bun run dev           # website (apps/web)
+bun run dev:desktop   # menu bar app (apps/desktop, Tauri)
+nix develop           # Rust, Bun, Tauri libraries and Playwright browsers
+```
+
+Web E2E: `t3boat-server` with fake `boat` and `t3` CLIs and a fake machine, driven in Chromium. It writes a JUnit report, traces, screenshots and the fakes' logs to `apps/desktop/e2e-results/`.
+
+```sh
+cd apps/desktop
+bun run build && bun run build:server && bunx playwright test
+```
 
 ```sh
 bun run dev           # website (apps/web)

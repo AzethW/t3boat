@@ -17,13 +17,23 @@ interface Props {
  *  forward, or a sign-in finished on the vendor's page. */
 export function ServerDialog({ task, onClose, onDone }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  // The button that asked for this: focus goes back to it when the dialog closes.
+  const opener = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   useEffect(() => {
     const d = dialog.current;
     if (d && !d.open) d.showModal();
   }, []);
+  const close = () => {
+    // The opener showed "Sending…" while the command ran and may have dropped focus: then the
+    // machine's own row takes it.
+    const own = opener.current && opener.current !== document.body ? opener.current : null;
+    const back = own ?? document.querySelector<HTMLElement>(`[aria-label="Details for ${CSS.escape(task.machine)}"]`);
+    onClose();
+    if (back?.isConnected) requestAnimationFrame(() => back.focus());
+  };
 
   return (
-    <dialog ref={dialog} className="server-dialog" onClose={onClose} aria-labelledby="server-dialog-title">
+    <dialog ref={dialog} className="server-dialog" onClose={close} aria-labelledby="server-dialog-title">
       {task.kind === "pair" ? <PairBody task={task} /> : <SignInBody task={task} onDone={onDone} />}
       <div className="server-dialog-foot">
         <button className="btn btn-sm btn-quiet" onClick={() => dialog.current?.close()}>

@@ -30,8 +30,12 @@ export interface Fixture {
 }
 
 async function waitFor(url: string, child: ChildProcess, ms = 30_000) {
+  // A binary that cannot start reports it as an "error" event, not an exit.
+  let failed: Error | null = null;
+  child.once("error", (e) => (failed = e));
   const until = Date.now() + ms;
   while (Date.now() < until) {
+    if (failed) throw failed;
     if (child.exitCode !== null) throw new Error(`t3boat-server exited with ${child.exitCode}`);
     try {
       const r = await fetch(url, { method: "POST" });
@@ -82,8 +86,15 @@ export async function start(): Promise<Fixture> {
     server.kill("SIGTERM");
     await exited;
   };
-  await launch();
-  const read = (name: string) => () => {
+  try {
+    await launch();
+  } catch (e) {
+    // No fixture to stop later: take the fake machine and the temp dir down now.
+    machine.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
+    throw e;
+  }
+  const read =(name: string) => () => {
     const p = path.join(state, name);
     return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
   };
